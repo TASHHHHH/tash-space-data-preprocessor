@@ -1,0 +1,13 @@
+TSDP logo artwork
+=================
+
+Source: logotsdp.png, supplied by the TSDP project owner on 2026-08-05
+Source SHA-256: C78803D853D07DB33D1E3AFF9063E97C83927AE4107D665A94695ACEBF885619
+
+The source artwork is retained as logo_source.png. The app_icon PNG and ICO
+files are mechanical nearest-neighbor resizes and format conversions that
+preserve the owner's pixel-art design. They are not derived from the previous
+temporary public-domain globe.
+
+Copyright and reuse rights remain with the project owner. Do not reuse the
+artwork separately from TSDP without the owner's permission.

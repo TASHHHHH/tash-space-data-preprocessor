@@ -1,0 +1,51 @@
+# Python caches and environments
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.venv/
+venv/
+
+# Local build and release output
+/build/
+/dist/
+/release/
+
+# Pre-refactor checkpoints retained only on the local machine
+/baseline/
+/TSDP.py
+
+# Local application state, credentials, and logs
+.env
+.env.*
+*_config.json
+*.log
+logs/
+
+# User astronomy data and scratch products
+*.fits
+*.fit
+*.fts
+*.memmap
+*.npy
+*.npz
+/jobs/
+/outputs/
+/scratch/
+/work/
+
+# Downloaded packaging duplicates
+/vendor/aria2.zip
+/vendor/aria2-package/
+
+# Screenshot that can contain personal Telegram settings
+/docs/tsdp2-settings.png
+
+# Editors and Windows metadata
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
