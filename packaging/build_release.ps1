@@ -1,6 +1,7 @@
 ﻿param(
     [switch]$SkipInstaller,
-    [switch]$NoClean
+    [switch]$NoClean,
+    [string]$InnoCompiler = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,10 +10,16 @@ $DistPath = Join-Path $ProjectRoot "dist"
 $BuildPath = Join-Path $ProjectRoot "build"
 $ReleasePath = Join-Path $ProjectRoot "release"
 $SpecPath = Join-Path $PSScriptRoot "TSDP.spec"
-$Version = "3.2.0"
+$Version = "3.2.1"
 
 New-Item -ItemType Directory -Path $ReleasePath -Force | Out-Null
 if (-not $NoClean) {
+    $WorkspacePrefix = [IO.Path]::GetFullPath($ProjectRoot) + [IO.Path]::DirectorySeparatorChar
+    foreach ($Target in @($DistPath, $BuildPath)) {
+        if (-not [IO.Path]::GetFullPath($Target).StartsWith($WorkspacePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to clean outside the project: $Target"
+        }
+    }
     if (Test-Path -LiteralPath $DistPath) {
         Remove-Item -LiteralPath $DistPath -Recurse -Force
     }
@@ -29,6 +36,29 @@ if ($LASTEXITCODE -ne 0) {
 $Executable = Join-Path $DistPath "TSDP\TSDP.exe"
 if (-not (Test-Path -LiteralPath $Executable)) {
     throw "Packaged executable was not created: $Executable"
+}
+
+$SmokeReport = Join-Path $ReleasePath "packaged-smoke.json"
+if (Test-Path -LiteralPath $SmokeReport) {
+    Remove-Item -LiteralPath $SmokeReport -Force
+}
+$PreviousSmokeOutput = $env:TSDP_RELEASE_SMOKE_OUTPUT
+try {
+    $env:TSDP_RELEASE_SMOKE_OUTPUT = $SmokeReport
+    $SmokeProcess = Start-Process -FilePath $Executable -WindowStyle Hidden -PassThru
+    if (-not $SmokeProcess.WaitForExit(45000)) {
+        $SmokeProcess.Kill()
+        throw "Packaged FITS/reprojection smoke check timed out."
+    }
+    if ($SmokeProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $SmokeReport)) {
+        throw "Packaged FITS/reprojection smoke check failed."
+    }
+    $SmokeResult = Get-Content -LiteralPath $SmokeReport -Raw | ConvertFrom-Json
+    if (-not $SmokeResult.ok -or $SmokeResult.version -ne $Version) {
+        throw "Packaged smoke report failed validation or reports the wrong version."
+    }
+} finally {
+    $env:TSDP_RELEASE_SMOKE_OUTPUT = $PreviousSmokeOutput
 }
 
 $Aria2Source = Join-Path $ProjectRoot "vendor\aria2c.exe"
@@ -51,11 +81,12 @@ if (-not $SkipInstaller) {
     $ProgramFilesX86 = [Environment]::GetFolderPath("ProgramFilesX86")
     $ProgramFiles64 = [Environment]::GetFolderPath("ProgramFiles")
     $Candidates = @(
+        $InnoCompiler,
         (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
         (Join-Path $ProgramFilesX86 "Inno Setup 6\ISCC.exe"),
         (Join-Path $ProgramFiles64 "Inno Setup 6\ISCC.exe")
     )
-    $Compiler = $Candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+    $Compiler = $Candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
     if (-not $Compiler) {
         throw "Inno Setup 6 was not found. Install it, then rerun this script."
     }

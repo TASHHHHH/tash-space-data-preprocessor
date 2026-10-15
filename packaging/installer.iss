@@ -1,6 +1,6 @@
 ﻿#define MyAppName "Tash Space Data Preprocessor"
 #define MyAppShortName "TSDP"
-#define MyAppVersion "3.2.0"
+#define MyAppVersion "3.2.1"
 #define MyAppExeName "TSDP.exe"
 
 [Setup]
@@ -28,7 +28,7 @@ SetupLogging=yes
 CloseApplications=yes
 RestartApplications=no
 UsePreviousAppDir=yes
-VersionInfoVersion=3.2.0.0
+VersionInfoVersion=3.2.1.0
 VersionInfoProductName={#MyAppName}
 VersionInfoDescription={#MyAppName} installer
 VersionInfoCompany=Tash
