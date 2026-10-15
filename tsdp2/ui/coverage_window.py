@@ -11,6 +11,7 @@ class CoverageWindow(CoverageSelectionMixin, CoverageRenderingMixin):
 
     def __init__(self, parent, groups, filter_codes, out_dir, on_report=None, on_region=None):
         self.groups = groups
+        self.filter_codes = list(filter_codes)
         self.out_dir = out_dir
         self.on_report = on_report
         self.on_region = on_region

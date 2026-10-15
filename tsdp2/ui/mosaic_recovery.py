@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from tsdp2.ui._common import *
+from tsdp2.ui.mosaic_runners import BackgroundCleanRunner, SeamRepairRunner
 
 class MosaicRecoveryMixin:
     def _remove_file(self, path):
