@@ -77,9 +77,7 @@ powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1
 
 Release artifacts and SHA-256 hashes are written to `release/`. The release build also supports a non-GUI packaged FITS/WCS/reprojection smoke check.
 
-## Logo and artwork
 
-The custom pixel-art Earth logo was supplied by the TSDP project owner. Its original 2500 x 2500 PNG and SHA-256 provenance are retained under `tsdp2/assets`. Windows icon sizes use nearest-neighbor conversion so the intended pixel blocks stay sharp in the title bar, taskbar, executable, shortcuts, and installer.
 ## Bundled software
 
 The Windows distribution bundles aria2 1.37.0 and its COPYING file. aria2 remains covered by its own license. TSDP's Python astronomy and UI dependencies are included in the packaged application.
