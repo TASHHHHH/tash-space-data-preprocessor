@@ -21,7 +21,7 @@ class CoverageRenderingMixin:
             self.view_combo.configure(state='readonly' if enabled else 'disabled')
         except EXPECTED_OPERATION_ERRORS:
             LOGGER.debug("Best-effort operation failed", exc_info=True)
-        if enabled and len(filter_codes) <= 1:
+        if enabled and len(self.filter_codes) <= 1:
             try:
                 self.prev_btn.configure(state='disabled')
                 self.next_btn.configure(state='disabled')
@@ -113,15 +113,15 @@ class CoverageRenderingMixin:
     def show_all(self):
         self.state['mode'] = 'all'
         self.view_var.set('All filters')
-        return self._render(filter_codes, 'All filters')
+        return self._render(self.filter_codes, 'All filters')
 
     def show_filter(self, idx=None):
-        if not filter_codes:
+        if not self.filter_codes:
             return self.state.get('report')
         if idx is None:
             idx = self.state.get('idx', 0)
-        self.state['idx'] = int(idx) % len(filter_codes)
-        code = filter_codes[self.state['idx']]
+        self.state['idx'] = int(idx) % len(self.filter_codes)
+        code = self.filter_codes[self.state['idx']]
         self.state['mode'] = 'filter'
         self.view_var.set(code)
         return self._render([code], f'{code} ({len(self.groups.get(code, []))} file(s))')
@@ -136,8 +136,8 @@ class CoverageRenderingMixin:
         cur = self.view_var.get()
         if cur == 'All filters':
             return self.show_all()
-        if cur in filter_codes:
-            self.state['idx'] = filter_codes.index(cur)
+        if cur in self.filter_codes:
+            self.state['idx'] = self.filter_codes.index(cur)
             return self.show_filter(self.state['idx'])
         return self.show_all()
 
@@ -145,7 +145,7 @@ class CoverageRenderingMixin:
         cur = self.view_var.get()
         if cur == 'All filters':
             self.show_all()
-        elif cur in filter_codes:
-            self.show_filter(filter_codes.index(cur))
+        elif cur in self.filter_codes:
+            self.show_filter(self.filter_codes.index(cur))
 
 __all__ = [name for name in globals() if not name.startswith('__')]

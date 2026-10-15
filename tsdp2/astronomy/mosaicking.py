@@ -149,7 +149,7 @@ def _combine_coadd_mosaic(combine, filter_code, inputs, n_tiles, progress_cb, sh
     return (mosaic, _fp)
 
 
-def _write_mosaic_products(combine, downscale, filter_code, job_paths, mosaic, n_tiles, out_dir, out_path, progress_cb, save_coverage_maps, scratch_dir, shape_out, sky_region, tile_mm_paths, tiles, tmp_dir, use_disk, wcs_out, workers):
+def _write_mosaic_products(combine, downscale, filter_code, job_paths, mosaic, n_tiles, out_dir, out_path, progress_cb, save_coverage_maps, scratch_dir, shape_out, sky_region, tile_mm_paths, tiles, tmp_dir, use_disk, wcs_out, workers, coverage_array=None):
     os.makedirs(out_dir, exist_ok=True)
     hdr_out = wcs_out.to_header()
     hdr_out['FILTER'] = filter_code
@@ -182,7 +182,7 @@ def _write_mosaic_products(combine, downscale, filter_code, job_paths, mosaic, n
             quality_array = None
         else:
             quality_contributors = []
-            quality_array = _fp
+            quality_array = coverage_array
         coverage_path, weight_path = _write_mosaic_quality_maps(quality_contributors, shape_out, wcs_out, out_dir, filter_code, quality_work_dir, progress_cb=progress_cb, coverage_array=quality_array, job_paths=job_paths)
         print(f'[Mosaic] quality maps written: {coverage_path}, {weight_path}', flush=True)
         if not tmp_dir:
@@ -297,7 +297,7 @@ def mosaic_filter_group(paths, out_dir, filter_code, combine='median', progress_
             mosaic, tiles = _combine_in_memory_mosaic(combine, data, filter_code, hdr, inputs, n_tiles, progress_cb, shape_out, wcs_out, workers)
         else:
             mosaic, _fp = _combine_coadd_mosaic(combine, filter_code, inputs, n_tiles, progress_cb, shape_out, wcs_out, workers)
-        _write_mosaic_products(combine, downscale, filter_code, job_paths, mosaic, n_tiles, out_dir, out_path, progress_cb, save_coverage_maps, scratch_dir, shape_out, sky_region, tile_mm_paths, tiles, tmp_dir, use_disk, wcs_out, workers)
+        _write_mosaic_products(combine, downscale, filter_code, job_paths, mosaic, n_tiles, out_dir, out_path, progress_cb, save_coverage_maps, scratch_dir, shape_out, sky_region, tile_mm_paths, tiles, tmp_dir, use_disk, wcs_out, workers, coverage_array=_fp)
         output_written = True
         if tmp_dir:
             _update_recovery_manifest(tmp_dir, stage='complete')
