@@ -21,7 +21,7 @@ class MastImporterProductsMixin:
             parsed = urlparse(uri)
             qs = parse_qs(parsed.query)
             if "uri" in qs and qs["uri"]:
-                return MASTCsvImporter._filename_from_uri(qs["uri"][0])
+                return MastImporterProductsMixin._filename_from_uri(qs["uri"][0])
             name = unquote(Path(parsed.path).name)
             return name or "download.fits"
         return unquote(uri.rsplit("/", 1)[-1]) or "download.fits"
