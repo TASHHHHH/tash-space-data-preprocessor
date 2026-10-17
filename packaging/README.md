@@ -7,8 +7,8 @@ Run from PowerShell:
 The script creates:
 
 - dist\TSDP\TSDP.exe and its private runtime
-- release\TSDP-3.2.1-portable.zip
-- release\TSDP-Setup-3.2.1.exe
+- release\TSDP-3.2.2-portable.zip
+- release\TSDP-Setup-3.2.2.exe
 - release\SHA256SUMS.txt
 
 The installer is per-user by default, supports upgrades over the existing version,

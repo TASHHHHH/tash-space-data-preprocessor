@@ -104,6 +104,7 @@ class SettingsStateMixin:
             )
             for key, variable in (
                 ("mosaic_auto_send", mosaic.auto_send),
+                ("mosaic_auto_workers", mosaic.auto_workers),
                 ("mosaic_save_coverage_maps", mosaic.save_coverage_maps),
                 ("mosaic_resume_cache", mosaic.resume_cache),
                 ("mosaic_full_resolution", mosaic.turbo_fullres),
@@ -174,6 +175,7 @@ class SettingsStateMixin:
                     "mosaic_scratch_dir": str(mosaic.scratch_dir.get()).strip(),
                     "mosaic_combine": str(mosaic.combine_fn.get()),
                     "mosaic_workers": _bounded_int(mosaic.n_workers.get(), 4, 1, 64),
+                    "mosaic_auto_workers": bool(mosaic.auto_workers.get()),
                     "mosaic_scale": str(mosaic.downscale_global.get()),
                     "mosaic_draft_scale": str(mosaic.draft_scale.get()),
                     "mosaic_seam_strength": str(mosaic.seam_strength.get()),
@@ -260,6 +262,7 @@ class SettingsStateMixin:
             mosaic = self.mosaic
             mosaic.combine_fn.set("feather")
             mosaic.n_workers.set(max(1, (os.cpu_count() or 4) - 1))
+            mosaic.auto_workers.set(True)
             mosaic.downscale_global.set("1.0")
             mosaic.draft_scale.set("0.08")
             mosaic.seam_strength.set("1.0")

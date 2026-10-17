@@ -10,7 +10,7 @@ $DistPath = Join-Path $ProjectRoot "dist"
 $BuildPath = Join-Path $ProjectRoot "build"
 $ReleasePath = Join-Path $ProjectRoot "release"
 $SpecPath = Join-Path $PSScriptRoot "TSDP.spec"
-$Version = "3.2.1"
+$Version = "3.2.2"
 
 New-Item -ItemType Directory -Path $ReleasePath -Force | Out-Null
 if (-not $NoClean) {
