@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.2.3
+
+- Fetch SkyView FITS backgrounds through NASA's direct HTTPS interface, without importing astroquery's unrelated VO/SAMP dependencies; bound request size/time and cache recent cutouts.
+- Keep area selection available on an offline celestial WCS grid when the sky service is unavailable.
+- Add coverage-window output scale controls synchronized with the Mosaic tab, plus live per-filter width x height readouts for the full footprint or selected/rotated area.
+- Compute dimensions with the same native geometry, scale overrides, and crop operations as the final mosaic writer, using headers rather than full science arrays.
+- Composite transparent coverage fills once per filter so overlapping frames do not obscure the sky image.
+- Deliver background worker results through a UI-thread queue and keep long status/file labels within the coverage window.
+
 ## 3.2.2
 
 - Recognize optical ugrizY, common RGB/narrowband names, DECam descriptive FILTER headers, and compressed FITS filenames; retain custom filter header names.

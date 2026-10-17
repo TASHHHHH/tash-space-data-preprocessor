@@ -8,7 +8,7 @@ import os
 APP_TITLE = "TSDP"
 APP_NAME = "Tash Space Data Preprocessor"
 APP_SUBTITLE = APP_NAME
-APP_VERSION = "3.2.2"
+APP_VERSION = "3.2.3"
 APP_UPDATE_URL = os.environ.get("TSDP_UPDATE_URL", "").strip()
 DEFAULT_ARIA2 = "aria2c.exe"
 

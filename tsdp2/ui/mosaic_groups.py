@@ -104,12 +104,21 @@ class MosaicGroupsMixin:
             self, self.groups, selected_filters=selected,
             out_dir=self.out_dir.get().strip(),
             on_report=self._on_coverage_report,
-            on_region=self._on_coverage_region)
+            on_region=self._on_coverage_region,
+            global_scale=self.downscale_global.get(),
+            filter_scales=dict(self.filter_downscales),
+            on_scale=self._on_coverage_scale)
+
+    def _on_coverage_scale(self, scale):
+        self.downscale_global.set(str(_normalise_mosaic_downscale(scale)))
+        self._rebuild_tree()
 
     def _on_coverage_region(self, region):
         if not isinstance(region, dict) or len(region.get("world_corners") or []) != 4:
             raise ValueError("The selected sky rectangle is invalid.")
         self.sky_region = dict(region)
+        if 'output_scale' in region:
+            self._on_coverage_scale(region['output_scale'])
         self._clear_area_btn.configure(state="normal")
         rotation = float(region.get("rotation_deg", 0.0) or 0.0)
         self._area_lbl.configure(

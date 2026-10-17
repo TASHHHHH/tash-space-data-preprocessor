@@ -24,7 +24,7 @@ def _test_wcs() -> WCS:
     return wcs
 
 
-def run_release_smoke(output_path: str | Path) -> int:
+def run_release_smoke(output_path: str | Path, *, check_skyview: bool = False) -> int:
     target = Path(output_path)
     payload: dict[str, object] = {
         "product": APP_NAME,
@@ -51,6 +51,14 @@ def run_release_smoke(output_path: str | Path) -> int:
             and footprint.shape == source.shape
             and np.isfinite(projected).all()
         )
+        if check_skyview:
+            from tsdp2.astronomy.sky_background import fetch_skyview_fits
+
+            sky, sky_wcs = fetch_skyview_fits(83.0, -5.0, 0.1, 0.075, 128, 96)
+            payload["checks"]["skyview"] = bool(
+                sky.shape == (96, 128) and sky_wcs.has_celestial
+                and np.isfinite(sky).any()
+            )
         payload["ok"] = all(payload["checks"].values())
     except (OSError, ValueError, TypeError, RuntimeError, ImportError) as exc:
         payload["ok"] = False

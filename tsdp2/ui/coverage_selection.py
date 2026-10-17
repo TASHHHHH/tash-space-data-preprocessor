@@ -39,6 +39,7 @@ class CoverageSelectionMixin:
                 LOGGER.debug("Best-effort operation failed", exc_info=True)
         self.use_area_btn.configure(state='disabled')
         self.area_var.set('Draw an area; drag inside to move, squares to resize, round handle to rotate.')
+        self._update_output_dimensions()
 
     def _normalise_angle(self, value):
         angle = float(value or 0.0)
@@ -91,6 +92,7 @@ class CoverageSelectionMixin:
             else:
                 self.canvas.coords(resize_ids[name], *box)
         self.canvas.tag_raise('sky_selection')
+        self._update_output_dimensions()
 
     def _canvas_point(self, event):
         report = self.state.get('report') or {}
@@ -230,7 +232,7 @@ class CoverageSelectionMixin:
             region = self._selection_to_region()
             selection = self.state.get('selection') or {}
             if region:
-                self.use_area_btn.configure(state='normal')
+                self._update_output_dimensions()
                 self.area_var.set(f"Resized to {float(selection.get('width', 0)):.0f} × {float(selection.get('height', 0)):.0f} pixels, rotation {region['rotation_deg']:+.1f}°. Click ‘Use selected area for Mosaic’.")
             return
         if self.state.get('rotating'):
@@ -238,7 +240,7 @@ class CoverageSelectionMixin:
             self.canvas.configure(cursor='')
             region = self._selection_to_region()
             if region:
-                self.use_area_btn.configure(state='normal')
+                self._update_output_dimensions()
                 self.area_var.set(f"Selected center RA {region['center_ra']:.6f}, Dec {region['center_dec']:.6f}, rotation {region['rotation_deg']:+.1f}°. Click ‘Use selected area for Mosaic’.")
             return
         if self.state.get('moving'):
@@ -248,7 +250,7 @@ class CoverageSelectionMixin:
             self.canvas.configure(cursor='fleur')
             region = self._selection_to_region()
             if region:
-                self.use_area_btn.configure(state='normal')
+                self._update_output_dimensions()
                 self.area_var.set(f"Moved selection to RA {region['center_ra']:.6f}, Dec {region['center_dec']:.6f}, rotation {region['rotation_deg']:+.1f}°. Click ‘Use selected area for Mosaic’.")
             return
         start = self.state.get('drag_start')
@@ -270,7 +272,7 @@ class CoverageSelectionMixin:
         self._draw_selection()
         region = self._selection_to_region()
         if region:
-            self.use_area_btn.configure(state='normal')
+            self._update_output_dimensions()
             self.area_var.set(f"Selected sky area centered at RA {region['center_ra']:.6f}, Dec {region['center_dec']:.6f}, rotation 0.0°. Click ‘Use selected area for Mosaic’.")
 
     def _set_rotation(self, value):
@@ -286,11 +288,14 @@ class CoverageSelectionMixin:
         self._draw_selection()
         region = self._selection_to_region()
         if region:
-            self.use_area_btn.configure(state='normal')
+            self._update_output_dimensions()
             self.area_var.set(f"Selected center RA {region['center_ra']:.6f}, Dec {region['center_dec']:.6f}, rotation {angle:+.1f}°. Click ‘Use selected area for Mosaic’.")
 
     def _angle_changed(self, _event=None):
-        self._set_rotation(self.rotation_var.get())
+        try:
+            self._set_rotation(self.rotation_var.get())
+        except tk.TclError:
+            return
 
     def _wheel_rotate(self, event):
         if not isinstance(self.state.get('selection'), dict):
@@ -357,10 +362,20 @@ class CoverageSelectionMixin:
             LOGGER.debug("Best-effort operation failed", exc_info=True)
 
     def _use_selection(self):
+        try:
+            scale = _normalise_mosaic_downscale(self.scale_var.get())
+        except ValueError as exc:
+            messagebox.showerror('Invalid output scale', str(exc), parent=self.win)
+            return
         region = self._selection_to_region()
         if not region:
-            messagebox.showinfo('Select a sky area', 'Drag a rectangle over the background image first.', parent=self.win)
+            messagebox.showinfo('Select a sky area', 'Drag a rectangle over the sky preview first.', parent=self.win)
             return
+        self._update_output_dimensions()
+        if any(size.get('error') for size in self.output_dimensions.values()):
+            messagebox.showinfo('Area does not overlap all filters', 'Adjust the area or selected filters so every output has an overlap.', parent=self.win)
+            return
+        region['output_scale'] = scale
         if self.on_region is not None:
             try:
                 self.on_region(region)

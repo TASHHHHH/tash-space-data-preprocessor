@@ -1,4 +1,4 @@
-﻿param(
+param(
     [switch]$SkipInstaller,
     [switch]$NoClean,
     [string]$InnoCompiler = ""
@@ -10,7 +10,7 @@ $DistPath = Join-Path $ProjectRoot "dist"
 $BuildPath = Join-Path $ProjectRoot "build"
 $ReleasePath = Join-Path $ProjectRoot "release"
 $SpecPath = Join-Path $PSScriptRoot "TSDP.spec"
-$Version = "3.2.2"
+$Version = "3.2.3"
 
 New-Item -ItemType Directory -Path $ReleasePath -Force | Out-Null
 if (-not $NoClean) {
