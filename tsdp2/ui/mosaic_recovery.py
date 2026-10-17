@@ -216,7 +216,8 @@ class MosaicRecoveryMixin:
             filter_scales=dict(self.filter_downscales),
             save_coverage_maps=self.save_coverage_maps.get(),
             sky_region=self.sky_region,
-            extra_clean_copy=bool(self.highres_background_cleanup.get()))
+            extra_clean_copy=bool(self.highres_background_cleanup.get()),
+            combine=self.combine_fn.get())
 
     def show_preflight(self):
         if not self.groups:

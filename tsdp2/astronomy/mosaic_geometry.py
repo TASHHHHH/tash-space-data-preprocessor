@@ -6,7 +6,7 @@ from tsdp2.astronomy.coverage import _sample_valid_pixel_mask_on_preview
 from tsdp2.astronomy.fits_io import _mosaic_input_display_name, _parse_mosaic_hdu_ref
 from tsdp2.astronomy.regions import _crop_wcs_to_sky_region, _downscale_celestial_wcs, _mosaic_filter_scale
 from tsdp2.recovery.manifests import _recovery_header_inputs
-from tsdp2.utilities.memory import _available_memory_bytes, _format_gib
+from tsdp2.utilities.memory import _available_memory_bytes, _format_gib, _mosaic_working_bytes, _mosaic_memory_budget
 
 _MOSAIC_MAX_CANVAS_PX = 2_000_000_000
 
@@ -153,7 +153,7 @@ def _nearest_existing_folder(path):
 
 def _build_mosaic_preflight(groups, out_dir, scratch_dir, global_scale=1.0,
                             filter_scales=None, save_coverage_maps=True,
-                            sky_region=None, extra_clean_copy=False):
+                            sky_region=None, extra_clean_copy=False, combine="feather"):
     """Header-only geometry plus sampled real-data and disk-space inspection."""
     filter_scales = dict(filter_scales or {})
     results = []
@@ -180,7 +180,7 @@ def _build_mosaic_preflight(groups, out_dir, scratch_dir, global_scale=1.0,
         output_bytes = pixels * 4 * product_count
         # Reprojected tiles + combined mosaic + one reusable quality-map scratch.
         scratch_bytes = pixels * 4 * (len(inputs) + 1 + (1 if save_coverage_maps else 0))
-        working_memory_bytes = pixels * 8 * 3
+        working_memory_bytes = _mosaic_working_bytes(len(inputs), shape_out, combine)
         total_output += output_bytes
         total_scratch += scratch_bytes
         peak_memory = max(peak_memory, working_memory_bytes)
@@ -207,7 +207,7 @@ def _build_mosaic_preflight(groups, out_dir, scratch_dir, global_scale=1.0,
 
     available_memory = _available_memory_bytes()
     memory_pressure = bool(
-        available_memory is not None and peak_memory > available_memory * 0.65
+        available_memory is not None and peak_memory > _mosaic_memory_budget(available_memory)
     )
     if memory_pressure:
         warnings_out.append(

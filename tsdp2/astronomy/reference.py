@@ -12,18 +12,53 @@ def try_get_header_value(hdr, keys):
 
 
 FILTER_RE = re.compile(r"(F\d{3,4}[A-Z]|N\d{3,4})", re.IGNORECASE)
+OPTICAL_FILTER_RE = re.compile(
+    r"(?:^|[^A-Z0-9])(?P<band>HA|HALPHA|OIII|SII|VR|[UGRIZYBVL])(?:$|[^A-Z0-9])",
+    re.IGNORECASE,
+)
+FILTER_HEADER_KEYS = ("FILTER", "FILTER1", "FILTER2", "PUPIL", "BAND", "FILTNAM", "FILTERID")
+_EMPTY_FILTERS = {"", "NONE", "NULL", "N/A", "UNKNOWN", "CLEAR", "CLEAR1L", "CLEAR2L", "OPEN"}
+# Approximate band centres used for reference/PSF ordering, not photometric calibration.
+_OPTICAL_MICRONS = {"U": 0.36, "B": 0.44, "G": 0.48, "V": 0.55,
+                    "L": 0.55, "VR": 0.62, "R": 0.64, "I": 0.78,
+                    "Z": 0.92, "Y": 1.0, "HA": 0.6563, "OIII": 0.5007, "SII": 0.6724}
 
 
 def parse_filter_code(text: str):
     if not text:
         return ""
-    m = FILTER_RE.search(text.upper())
-    return m.group(1) if m else ""
+    text = str(text).strip().upper()
+    m = FILTER_RE.search(text)
+    if m:
+        return m.group(1)
+    # A band must be a complete token: g.fits and field_g_01.fits are valid,
+    # while target.fits and mosaic.fits must not become R or I.
+    m = OPTICAL_FILTER_RE.search(text)
+    if not m:
+        return ""
+    band = m.group("band")
+    return "HA" if band == "HALPHA" else band
+
+
+def filter_from_header(header):
+    """Prefer recognised bands; retain custom FILTER names instead of losing them."""
+    for key in FILTER_HEADER_KEYS:
+        code = parse_filter_code(header.get(key, ""))
+        if code:
+            return code
+    for key in ("FILTER", "FILTER1", "FILTER2", "BAND", "FILTNAM", "FILTERID"):
+        value = str(header.get(key, "")).strip().upper()
+        if value not in _EMPTY_FILTERS and not value.startswith("CLEAR"):
+            return value
+    return ""
 
 
 def filter_code_to_microns(code: str):
     if not code:
         return None
+    code = code.upper()
+    if code in _OPTICAL_MICRONS:
+        return _OPTICAL_MICRONS[code]
     prefix = code.upper()[:1]
     if prefix not in ("F", "N"):
         return None
@@ -46,14 +81,9 @@ def suggest_name_from_fits(path: str):
         return code or os.path.splitext(base)[0]
 
     instr = try_get_header_value(hdr, ["INSTRUME", "INSTRUMENT"]).lower()
-    filt = try_get_header_value(hdr, ["FILTER", "FILTER1", "FILTER2"])
-    pupil = try_get_header_value(hdr, ["PUPIL"])
-    band = try_get_header_value(hdr, ["BAND"])
 
     code = (
-        parse_filter_code(filt) or
-        parse_filter_code(pupil) or
-        parse_filter_code(band) or
+        filter_from_header(hdr) or
         parse_filter_code(base)
     )
 

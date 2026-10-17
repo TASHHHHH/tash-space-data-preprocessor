@@ -51,6 +51,24 @@ def _format_gib(nbytes):
         return "unknown"
 
 
+def _mosaic_memory_budget(available=None):
+    """Spend at most 60% of free RAM, retaining up to 3 GiB for other apps."""
+    if available is None:
+        available = _available_memory_bytes()
+    if available is None:
+        return None
+    reserve = min(3 * 1024 ** 3, int(available * 0.5))
+    return max(0, min(int(available * 0.60), available - reserve))
+
+
+def _mosaic_working_bytes(n_tiles, shape_out, combine):
+    pixels = int(shape_out[0]) * int(shape_out[1])
+    n_tiles = max(1, int(n_tiles))
+    # Output tiles plus blend workspaces/EDT, or the median stack and its copy.
+    per_pixel = (4 * n_tiles + 40 if combine == "feather" else 12 * n_tiles + 8)
+    return pixels * per_pixel + 64 * 1024 ** 2
+
+
 def _mosaic_disk_mode_needed(n_tiles, shape_out, combine):
     """Return (use_disk_mode, reason). Median/feather mosaics need special
     handling because stacking many full-size reprojected tiles explodes RAM.
@@ -60,24 +78,22 @@ def _mosaic_disk_mode_needed(n_tiles, shape_out, combine):
     except EXPECTED_OPERATION_ERRORS:
         return False, "unknown shape"
     pixels = h * w
-    one_f32 = pixels * 4
-    # Old median path roughly needs: n tiles + stack + temporary float64 footprint.
-    # For the user's case: 13 * 11418 * 14168 is huge. Disk mode avoids keeping all
-    # reprojected tiles in RAM.
-    estimated_stack = one_f32 * max(1, int(n_tiles))
+    estimated_stack = _mosaic_working_bytes(n_tiles, shape_out, combine)
     avail = _available_memory_bytes()
-    if combine in ("median", "feather") and (pixels >= 40_000_000 or estimated_stack >= 1.2 * (1024 ** 3)):
-        return True, f"large {combine} mosaic: {n_tiles} tile(s), output {w}×{h}, stack would be {_format_gib(estimated_stack)}"
-    if avail is not None and combine in ("median", "feather") and estimated_stack > avail * 0.35:
-        return True, f"not enough safe RAM for in-memory {combine}: stack {_format_gib(estimated_stack)}, available {_format_gib(avail)}"
-    return False, "small enough for in-memory combine"
+    budget = _mosaic_memory_budget(avail)
+    if avail is None and combine in ("median", "feather") and (pixels >= 40_000_000 or estimated_stack >= 1.2 * (1024 ** 3)):
+        return True, f"large {combine} mosaic: {n_tiles} tile(s), output {w}×{h}, working set would be {_format_gib(estimated_stack)}"
+    if budget is not None and estimated_stack > budget:
+        return True, f"not enough safe RAM for in-memory {combine}: working set {_format_gib(estimated_stack)}, available {_format_gib(avail)}"
+    return False, f"estimated working set {_format_gib(estimated_stack)} fits available memory budget"
 
 
 def _safe_mosaic_workers(requested_workers, n_tiles, shape_out):
     """Clamp reproject workers so one large mosaic cannot launch 13 parallel
     1+ GiB allocations and murder the process.
     """
-    requested = max(1, min(_safe_int(requested_workers, default=1, lo=1), max(1, int(n_tiles))))
+    cpu_limit = max(1, (os.cpu_count() or 2) - 2)
+    requested = max(1, min(_safe_int(requested_workers, default=1, lo=1), max(1, int(n_tiles)), cpu_limit))
     try:
         h, w = int(shape_out[0]), int(shape_out[1])
         pixels = h * w
@@ -91,11 +107,28 @@ def _safe_mosaic_workers(requested_workers, n_tiles, shape_out):
         if pixels >= 15_000_000:
             return min(requested, 2)
         return requested
-    # reproject can allocate output + footprint + temporaries. Treat one worker as
-    # roughly 3 float64 images. This deliberately overestimates to stay alive.
-    per_worker = pixels * 8 * 3
-    safe = max(1, int((avail * 0.45) // max(1, per_worker)))
+    # Reprojection is blockwise: float32 output/footprint plus a bounded WCS
+    # workspace, rather than three full-size float64 coordinate grids per worker.
+    per_worker = pixels * 4 + 64 * 1024 ** 2
+    retained_tiles = pixels * 4 * max(1, int(n_tiles))
+    safe = max(1, int((_mosaic_memory_budget(avail) - retained_tiles) // max(1, per_worker)))
     return max(1, min(requested, safe))
+
+
+def _safe_mosaic_block_workers(requested_workers, tile_workers, n_tiles, shape_out):
+    """Use spare threads within large tiles without multiplying the RAM budget."""
+    pixels = int(shape_out[0]) * int(shape_out[1])
+    if pixels < 4_000_000:
+        return 1
+    available = _available_memory_bytes()
+    if available is None:
+        return 1
+    tile_workers = max(1, int(tile_workers))
+    requested = min(max(1, int(requested_workers)), max(1, (os.cpu_count() or 2) - 2))
+    retained = pixels * 4 * (max(1, int(n_tiles)) + tile_workers)
+    spare = max(0, _mosaic_memory_budget(available) - retained)
+    by_ram = int(spare // (64 * 1024 ** 2 * tile_workers))
+    return max(1, min(4, requested // tile_workers, by_ram))
 
 
 def _safe_disk_turbo_workers(requested_workers, n_tiles, shape_out):
@@ -123,10 +156,10 @@ def _safe_disk_turbo_workers(requested_workers, n_tiles, shape_out):
             return 1
         return min(requested, max(1, (os.cpu_count() or 2) // 3))
 
-    # Two float32 memmaps plus coordinate/interpolation working space. Only
-    # 32% of currently available RAM may be committed to concurrent workers.
+    # Keep a conservative resident allowance for two memmaps and blockwise WCS
+    # work, while leaving CPU threads and free RAM for the rest of the desktop.
     per_worker = max(640 * 1024 ** 2, int(pixels * 4 * 3.5))
-    by_ram = max(1, int((available * 0.32) // max(1, per_worker)))
-    by_cpu = max(1, (os.cpu_count() or 2) // 2)
+    by_ram = max(1, int((_mosaic_memory_budget(available) * 0.8) // max(1, per_worker)))
+    by_cpu = max(1, (os.cpu_count() or 2) - 2)
     return max(1, min(requested, by_ram, by_cpu))
 __all__ = [name for name in globals() if not name.startswith('__')]

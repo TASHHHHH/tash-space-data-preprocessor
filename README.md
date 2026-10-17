@@ -1,10 +1,10 @@
 ﻿# Tash Space Data Preprocessor (TSDP)
 
-TSDP 3.2.1 is a Windows desktop application for downloading and processing astronomical FITS data. It supports multi-HDU inputs, WCS-aware mosaics, normalization, alignment, previews, recovery, and optional Telegram control.
+TSDP 3.2.2 is a Windows desktop application for downloading and processing astronomical FITS data. It supports multi-HDU inputs, WCS-aware mosaics, normalization, alignment, previews, recovery, and optional Telegram control.
 
 ## Recommended installation
 
-Run `TSDP-Setup-3.2.1.exe`. The installer uses the current Windows account, supports installing over a previous version, creates Start menu shortcuts, and can optionally create a desktop shortcut. Python is not required for the installed application.
+Run `TSDP-Setup-3.2.2.exe`. The installer uses the current Windows account, supports installing over a previous version, creates Start menu shortcuts, and can optionally create a desktop shortcut. Python is not required for the installed application.
 
 A portable ZIP is also provided. Extract the entire folder before running `TSDP.exe`; do not run the executable from inside the ZIP.
 
@@ -82,3 +82,9 @@ Release artifacts and SHA-256 hashes are written to `release/`. The release buil
 
 The Windows distribution bundles aria2 1.37.0 and its COPYING file. aria2 remains covered by its own license. TSDP's Python astronomy and UI dependencies are included in the packaged application.
 
+
+## Optical filters and automatic mosaic resources
+
+DECam optical bands (`u`, `g`, `r`, `i`, `z`, `Y`), descriptive FITS filter headers, and names such as `g.fits`, `field_r_001.fits`, and `z.fits.fz` are recognized. Headers take precedence over filenames, and custom FILTER names are retained. Truly unlabelled inputs remain separate UNKNOWN groups and can be assigned with the Mosaic tab's group rename/move controls.
+
+The Mosaic tab enables **Auto (safe RAM)** by default. It selects per-group worker limits from CPU capacity and currently available RAM, leaves two CPU threads free, and budgets at most 60% of free memory for processing. Disable Auto to use the manual thread limit; memory limits still apply. Full-resolution mosaics use float32 blocks and reusable feather-blend workspaces. GPU acceleration is not used.
