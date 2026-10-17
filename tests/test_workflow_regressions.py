@@ -80,13 +80,17 @@ def mosaic_tab_stub(tmp_path, path):
     return tab
 
 
-def test_mosaic_button_starts_processing_worker(tmp_path, fits_factory, monkeypatch):
+@pytest.mark.parametrize("auto", [False, True])
+def test_mosaic_button_starts_processing_worker(tmp_path, fits_factory, monkeypatch, auto):
     import tsdp2.ui.mosaic_processing as module
     from tsdp2.ui.mosaic_runners import MosaicRunner
     tab = mosaic_tab_stub(tmp_path, fits_factory('tile.fits', FILTER='F200W'))
+    tab.auto_workers = Mock(get=Mock(return_value=auto))
+    monkeypatch.setattr(module.os, 'cpu_count', lambda: 24)
     monkeypatch.setattr(module.messagebox, 'askyesno', lambda *a, **k: True)
     monkeypatch.setattr(MosaicRunner, 'start', lambda self: self.run())
     MosaicTab.run_mosaic(tab)
+    assert tab.mosaic_runner.n_workers == (22 if auto else 1)
     events = list(tab.mosaic_q.queue)
     assert any(event['step'] == 'done' for event in events), events
     assert list(tab._active_job_paths.final.rglob('*.fits'))

@@ -67,6 +67,7 @@ def test_workflow_defaults_round_trip_through_settings_file(tmp_path, monkeypatc
         first.mosaic_tab.combine_fn.set("mean")
         first.mosaic_tab.downscale_global.set("0.5")
         first.mosaic_tab.retain_intermediates.set(True)
+        first.mosaic_tab.auto_workers.set(False)
         first.aligner_tab.normalize_enabled.set(True)
         first.aligner_tab.normalize_mode.set("p95")
         first.aligner_tab.generate_diagnostics.set(False)
@@ -89,6 +90,7 @@ def test_workflow_defaults_round_trip_through_settings_file(tmp_path, monkeypatc
         assert second.mosaic_tab.combine_fn.get() == "mean"
         assert second.mosaic_tab.downscale_global.get() == "0.5"
         assert second.mosaic_tab.retain_intermediates.get() is True
+        assert second.mosaic_tab.auto_workers.get() is False
         assert second.aligner_tab.normalize_enabled.get() is True
         assert second.aligner_tab.normalize_mode.get() == "p95"
         assert second.aligner_tab.generate_diagnostics.get() is False

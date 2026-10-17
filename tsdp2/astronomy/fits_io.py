@@ -4,7 +4,7 @@ from tsdp2._deps import *
 from tsdp2.logging_config import LOGGER
 
 _PRIMARY_META_KEYS = (
-    "FILTER", "FILTER1", "FILTER2", "PUPIL",
+    "FILTER", "FILTER1", "FILTER2", "PUPIL", "BAND", "FILTNAM", "FILTERID",
     "INSTRUME", "DETECTOR", "TELESCOP",
     "EXPTIME", "TARGNAME", "PROPOSID",
     "DATE-OBS", "OBJECT", "OBSTYPE",

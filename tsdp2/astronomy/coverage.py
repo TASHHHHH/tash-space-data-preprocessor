@@ -5,7 +5,7 @@ from tsdp2.logging_config import LOGGER
 from tsdp2.output_paths import JobPaths
 from tsdp2.astronomy.fits_io import _PRIMARY_META_KEYS, _iter_requested_image_hdus, _mosaic_input_display_name, _parse_mosaic_hdu_ref, load_2d_and_header
 from tsdp2.astronomy.previews import apply_stretch
-from tsdp2.astronomy.reference import parse_filter_code
+from tsdp2.astronomy.reference import filter_from_header, parse_filter_code
 
 def _has_valid_celestial_wcs(data, hdr):
     """Return True if hdr has a 2D celestial WCS with a finite sky footprint."""
@@ -57,10 +57,7 @@ def wcs_footprint_from_header_only(path: str):
                     if fp.shape != (4, 2) or not np.all(np.isfinite(fp)):
                         continue
                     filt = (
-                        parse_filter_code(str(hdr.get("FILTER", ""))) or
-                        parse_filter_code(str(hdr.get("FILTER1", ""))) or
-                        parse_filter_code(str(hdr.get("FILTER2", ""))) or
-                        parse_filter_code(str(hdr.get("PUPIL", ""))) or
+                        filter_from_header(hdr) or
                         parse_filter_code(os.path.basename(real_path)) or
                         "UNKNOWN"
                     )

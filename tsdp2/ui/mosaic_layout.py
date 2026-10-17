@@ -17,6 +17,7 @@ class MosaicLayoutMixin:
         self.out_dir    = tk.StringVar(value=str(Path.home() / "JWST_Mosaics"))
         self.combine_fn = tk.StringVar(value="feather")
         self.n_workers  = tk.IntVar(value=max(1, (os.cpu_count() or 4) - 1))
+        self.auto_workers = tk.BooleanVar(value=True)
         self.downscale_global = tk.StringVar(value="1.0")
         self.draft_scale = tk.StringVar(value="0.08")
         self.draft_background_cleanup = tk.BooleanVar(value=True)
@@ -143,8 +144,8 @@ class MosaicLayoutMixin:
         ttk.Label(orow, text="Threads:").pack(side="left", padx=(14, 4))
         ttk.Spinbox(orow, from_=1, to=64, textvariable=self.n_workers,
                     width=4).pack(side="left")
-        ttk.Label(orow, text="(per filter group)",
-                  foreground="gray").pack(side="left", padx=(4, 12))
+        ttk.Checkbutton(orow, text="Auto (safe RAM)",
+                        variable=self.auto_workers).pack(side="left", padx=(4, 12))
         ttk.Label(orow, text="Scale:").pack(side="left", padx=(8, 4))
         ttk.Spinbox(orow, from_=0.02, to=1.0, increment=0.05,
                     textvariable=self.downscale_global, width=6).pack(side="left")

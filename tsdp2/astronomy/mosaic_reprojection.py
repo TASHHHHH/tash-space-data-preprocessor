@@ -5,6 +5,35 @@ from tsdp2.logging_config import LOGGER
 from tsdp2.output_paths import JobPaths, safe_filename
 from tsdp2.recovery.manifests import _stream_float32_to_fits
 
+
+def _mosaic_roundtrip_required(header, output_wcs, input_shape, output_shape):
+    """Retain inverse checks except for nearby, undistorted small TAN fields.
+
+    Both transforms are unambiguous within these small tangent-plane domains.
+    Distorted, wide-field and other projections retain reproject's default checks.
+    """
+    try:
+        input_wcs = WCS(header, naxis=2)
+        worlds = []
+        for wcs, shape in ((input_wcs, input_shape), (output_wcs, output_shape)):
+            if (wcs.has_distortion or wcs.wcs.get_pv() or
+                    tuple(wcs.wcs.ctype) != ("RA---TAN", "DEC--TAN")):
+                return True
+            corners = np.asarray(wcs.calc_footprint(axes=(int(shape[1]), int(shape[0]))))
+            if not np.isfinite(corners).all():
+                return True
+            worlds.extend(corners)
+        # Every corner must be within five degrees of the input tangent point.
+        # This also handles fields crossing RA=0 without a spurious wide span.
+        coords = np.deg2rad(np.asarray(worlds))
+        ra, dec = np.deg2rad(input_wcs.wcs.crval)
+        cosine = (np.sin(dec) * np.sin(coords[:, 1]) +
+                  np.cos(dec) * np.cos(coords[:, 1]) * np.cos(coords[:, 0] - ra))
+        return not bool(np.all(cosine > np.cos(np.deg2rad(5.0))))
+    except EXPECTED_OPERATION_ERRORS:
+        return True
+
+
 def _reproject_tile_to_memmap(idx, data, hdr, wcs_out, shape_out, tmp_dir, filter_code, progress_cb=None, total_tiles=1):
     """Reproject one tile into a float32 disk-backed memmap and mask invalid
     footprint pixels to NaN.

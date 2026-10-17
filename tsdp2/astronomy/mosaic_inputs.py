@@ -3,7 +3,7 @@ from __future__ import annotations
 from tsdp2._deps import *
 from tsdp2.logging_config import LOGGER
 from tsdp2.astronomy.fits_io import _iter_requested_image_hdus, _make_mosaic_hdu_ref, _parse_mosaic_hdu_ref
-from tsdp2.astronomy.reference import parse_filter_code
+from tsdp2.astronomy.reference import filter_from_header, parse_filter_code
 
 _NON_SCIENCE_MOSAIC_EXTNAMES = {
     "WHT", "WEIGHT", "CON", "CTX", "COVERAGE", "DQ", "DQMASK", "MASK",
@@ -105,28 +105,18 @@ def group_fits_by_filter(fits_paths, number_unknowns=False):
                 if requested_hdu is not None:
                     for hdu in _iter_requested_image_hdus(hdul, requested_hdu):
                         hdr = hdu.header
-                        for key in ("FILTER", "FILTER1", "FILTER2", "PUPIL"):
-                            code = parse_filter_code(str(hdr.get(key, "")))
-                            if code:
-                                break
+                        code = filter_from_header(hdr)
                         if code:
                             break
                 if not code:
-                    for key in ("FILTER", "FILTER1", "FILTER2", "PUPIL"):
-                        code = parse_filter_code(str(ph.get(key, "")))
-                        if code:
-                            break
+                    code = filter_from_header(ph)
 
-                # ── 2. Image extension headers as fallback ────────────────────
+                # Image extension headers are the fallback for ordinary files.
                 if not code and requested_hdu is None:
                     for hdu in _iter_requested_image_hdus(hdul, requested_hdu):
-                        hdr = hdu.header
-                        if hdr.get("NAXIS", 0) < 2:
+                        if hdu.header.get("NAXIS", 0) < 2:
                             continue
-                        for key in ("FILTER", "FILTER1", "FILTER2", "PUPIL"):
-                            code = parse_filter_code(str(hdr.get(key, "")))
-                            if code:
-                                break
+                        code = filter_from_header(hdu.header)
                         if code:
                             break
         except EXPECTED_OPERATION_ERRORS:
@@ -182,7 +172,7 @@ def _prefer_drc_over_drz(paths):
     return kept
 
 
-def _sky_match_tiles(tiles):
+def _sky_match_tiles(tiles, *, inplace=False):
     """
     Shift each tile so all share the same sigma-clipped sky level as tile 0.
     Works on the reprojected tiles (may contain NaN where there's no data).
@@ -205,7 +195,11 @@ def _sky_match_tiles(tiles):
         offset = ref_sky - _sky(tile)
         if abs(offset) > 0:
             print(f"[Mosaic] sky-match: tile offset = {offset:+.4f} e/s", flush=True)
-        matched.append(tile + offset)
+        if inplace:
+            tile += offset
+            matched.append(tile)
+        else:
+            matched.append(tile + offset)
     return matched
 
 
@@ -215,21 +209,24 @@ def _feather_mosaic(tiles):
     Each tile is weighted by its EDT distance from the nearest NaN edge,
     so coverage centres are trusted more than tile boundaries.
     """
-    # weight map: distance from nearest NaN / no-data pixel
-    w_list, d_list = [], []
+    if not tiles:
+        raise ValueError("No tiles to blend")
+    shape = tiles[0].shape
+    weights = np.zeros(shape, dtype=np.float32)
+    blended = np.zeros(shape, dtype=np.float32)
+    weighted_tile = np.empty(shape, dtype=np.float32)
     for tile in tiles:
-        valid = np.isfinite(tile).astype(np.float32)
-        dist  = distance_transform_edt(valid).astype(np.float32)
-        w_list.append(dist)
-        # replace NaN with 0 for the weighted sum
-        d_list.append(np.where(np.isfinite(tile), tile, 0.0).astype(np.float32))
-
-    w_sum  = np.stack(w_list, axis=0).sum(axis=0)   # (H, W)
-    blend  = (np.stack(d_list, axis=0)
-              * np.stack(w_list, axis=0)).sum(axis=0)
-
+        valid = np.isfinite(tile)
+        distance = distance_transform_edt(valid).astype(np.float32)
+        weights += distance
+        # Reuse one workspace; never stack all science images and weights.
+        np.multiply(tile, distance, out=weighted_tile, where=valid)
+        weighted_tile[~valid] = 0
+        blended += weighted_tile
     with np.errstate(invalid="ignore", divide="ignore"):
-        result = np.where(w_sum > 0, blend / w_sum, np.nan)
-    return result.astype(np.float32)
+        np.divide(blended, weights, out=blended, where=weights > 0)
+    blended[weights <= 0] = np.nan
+    return blended
+
 
 __all__ = [name for name in globals() if not name.startswith('__')]

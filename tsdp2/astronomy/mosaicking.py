@@ -11,6 +11,8 @@ from tsdp2.astronomy.regions import _crop_wcs_to_sky_region, _downscale_celestia
 from tsdp2.output_paths import JobPaths, safe_filename
 from tsdp2.recovery.manifests import _RECOVERY_MANIFEST_NAME, _stream_float32_to_fits, _update_recovery_manifest
 from tsdp2.utilities.memory import _mosaic_disk_mode_needed, _safe_disk_turbo_workers, _safe_mosaic_workers
+from tsdp2.astronomy.mosaic_reprojection import _mosaic_roundtrip_required
+from tsdp2.utilities.memory import _safe_mosaic_block_workers
 
 def _combine_disk_backed_mosaic(combine, crop_bounds, downscale, filter_code, inputs, n_tiles, out_dir, out_path, paths, progress_cb, resume_cache, scratch_dir, shape_out, sky_region, turbo_fullres, wcs_out, workers):
     scratch_root = os.path.abspath(os.fspath(scratch_dir or out_dir))
@@ -108,14 +110,22 @@ def _combine_disk_backed_mosaic(combine, crop_bounds, downscale, filter_code, in
     return (mosaic, tmp_dir, tile_mm_paths)
 
 
-def _combine_in_memory_mosaic(combine, data, filter_code, hdr, inputs, n_tiles, progress_cb, shape_out, wcs_out, workers):
+def _combine_in_memory_mosaic(combine, data, filter_code, hdr, inputs, n_tiles, progress_cb, shape_out, wcs_out, workers, block_workers=1):
     tiles = [None] * n_tiles
     done_count = [0]
 
     def _reproject_one(args):
         idx, data, hdr = args
-        arr, fp = reproject_interp((data, hdr), wcs_out, shape_out=shape_out)
-        return (idx, np.where(fp > 0.5, arr, np.nan).astype(np.float32, copy=False))
+        arr = np.empty(shape_out, dtype=np.float32)
+        fp = np.empty(shape_out, dtype=np.float32)
+        reproject_interp(
+            (data, hdr), wcs_out, shape_out=shape_out,
+            output_array=arr, output_footprint=fp,
+            block_size=(512, 512), parallel=block_workers if block_workers > 1 else False,
+            roundtrip_coords=_mosaic_roundtrip_required(hdr, wcs_out, data.shape, shape_out),
+        )
+        arr[fp <= 0.5] = np.nan
+        return idx, arr
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(_reproject_one, (i, d, h)): i for i, (d, h) in enumerate(inputs)}
         for fut in as_completed(futs):
@@ -127,7 +137,7 @@ def _combine_in_memory_mosaic(combine, data, filter_code, hdr, inputs, n_tiles, 
     if combine == 'feather':
         if progress_cb:
             progress_cb(n_tiles * 2 + 1, n_tiles * 2 + 2, f'Sky-matching + feathering {n_tiles} tile(s)…')
-        tiles = _sky_match_tiles(tiles)
+        tiles = _sky_match_tiles(tiles, inplace=True)
         mosaic = _feather_mosaic(tiles)
     else:
         if progress_cb:
@@ -142,7 +152,7 @@ def _combine_coadd_mosaic(combine, filter_code, inputs, n_tiles, progress_cb, sh
     if progress_cb:
         progress_cb(n_tiles + 1, n_tiles + 2, f'Coadding {filter_code} ({combine}, workers={workers})…')
     try:
-        mosaic, _fp = reproject_and_coadd(inputs, wcs_out, shape_out=shape_out, reproject_function=reproject_interp, combine_function=combine, parallel=workers > 1)
+        mosaic, _fp = reproject_and_coadd(inputs, wcs_out, shape_out=shape_out, reproject_function=reproject_interp, combine_function=combine, block_sizes=[(512, 512)] * len(inputs), parallel=workers if workers > 1 else False)
     except TypeError:
         mosaic, _fp = reproject_and_coadd(inputs, wcs_out, shape_out=shape_out, reproject_function=reproject_interp, combine_function=combine)
     mosaic = np.asarray(mosaic, dtype=np.float32)
@@ -278,8 +288,11 @@ def mosaic_filter_group(paths, out_dir, filter_code, combine='median', progress_
     workers = _safe_mosaic_workers(n_workers, n_tiles, shape_out)
     if use_disk:
         workers = _safe_disk_turbo_workers(n_workers, n_tiles, shape_out) if turbo_fullres else 1
+    block_workers = 1 if use_disk else _safe_mosaic_block_workers(n_workers, workers, n_tiles, shape_out)
     turbo_text = 'turbo' if use_disk and workers > 1 else 'safe'
     print(f'[Mosaic] {filter_code}: {n_tiles} tile(s), output={w_out}x{h_out}, combine={combine}, workers={workers}, memory_safe={use_disk}, disk_mode={turbo_text} ({disk_reason})', flush=True)
+    if block_workers > 1:
+        print(f'[Mosaic] {filter_code}: {block_workers} block threads per tile, at most {workers * block_workers} processing threads', flush=True)
     if progress_cb and use_disk:
         progress_cb(n_tiles, n_tiles * 3 + 2, f'Parallel memory-safe mosaic: {workers} tile workers for {filter_code} ({w_out}×{h_out})' if workers > 1 else f'Memory-safe mosaic enabled for {filter_code}: {w_out}×{h_out}, {n_tiles} tile(s)')
     mosaic_name = f'mosaic_{safe_filename(filter_code)}.fits'
@@ -294,7 +307,7 @@ def mosaic_filter_group(paths, out_dir, filter_code, combine='median', progress_
         if use_disk and combine in ('median', 'mean', 'average', 'feather'):
             mosaic, tmp_dir, tile_mm_paths = _combine_disk_backed_mosaic(combine, crop_bounds, downscale, filter_code, inputs, n_tiles, out_dir, out_path, paths, progress_cb, resume_cache, scratch_dir, shape_out, sky_region, turbo_fullres, wcs_out, workers)
         elif combine in ('median', 'feather'):
-            mosaic, tiles = _combine_in_memory_mosaic(combine, data, filter_code, hdr, inputs, n_tiles, progress_cb, shape_out, wcs_out, workers)
+            mosaic, tiles = _combine_in_memory_mosaic(combine, data, filter_code, hdr, inputs, n_tiles, progress_cb, shape_out, wcs_out, workers, block_workers=block_workers)
         else:
             mosaic, _fp = _combine_coadd_mosaic(combine, filter_code, inputs, n_tiles, progress_cb, shape_out, wcs_out, workers)
         _write_mosaic_products(combine, downscale, filter_code, job_paths, mosaic, n_tiles, out_dir, out_path, progress_cb, save_coverage_maps, scratch_dir, shape_out, sky_region, tile_mm_paths, tiles, tmp_dir, use_disk, wcs_out, workers, coverage_array=_fp)

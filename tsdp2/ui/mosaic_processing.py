@@ -60,7 +60,8 @@ class MosaicProcessingMixin:
                     active, out, self.scratch_dir.get().strip(),
                     global_scale=effective_global_scale,
                     filter_scales=effective_filter_scales,
-                    save_coverage_maps=False, sky_region=self.sky_region)
+                    save_coverage_maps=False, sky_region=self.sky_region,
+                    combine=self.combine_fn.get())
             else:
                 preflight = self._compute_preflight(active)
         except EXPECTED_OPERATION_ERRORS as exc:
@@ -155,10 +156,15 @@ class MosaicProcessingMixin:
             except EXPECTED_OPERATION_ERRORS as exc:
                 print(f"[Direct mosaic Telegram start failed] {exc}", flush=True)
 
+        requested_workers = self.n_workers.get()
+        auto_workers = getattr(self, "auto_workers", None)
+        if auto_workers is not None and auto_workers.get():
+            requested_workers = max(1, (os.cpu_count() or 2) - 2)
+        print(f"[Mosaic Tab] Worker limit: {requested_workers} (automatically bounded by free RAM)", flush=True)
         self.mosaic_runner = MosaicRunner(
             groups=active, out_dir=job_paths,
             combine=self.combine_fn.get(), status_q=self.mosaic_q,
-            n_workers=self.n_workers.get(),
+            n_workers=requested_workers,
             downscale_global=effective_global_scale,
             filter_downscales=effective_filter_scales,
             scratch_dir=self.scratch_dir.get().strip(),
