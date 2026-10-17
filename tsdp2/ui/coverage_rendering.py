@@ -8,6 +8,7 @@ from tsdp2.astronomy.previews import *
 from tsdp2.astronomy.reference import *
 from tsdp2.astronomy.regions import *
 from tsdp2.ui.theme import force_light_titlebar
+from tsdp2.astronomy.coverage_geometry import build_coverage_mosaic_geometries
 
 class CoverageRenderingMixin:
 
@@ -38,6 +39,7 @@ class CoverageRenderingMixin:
         self.state['busy'] = False
         self._set_controls_enabled(True)
         self.state['report'] = report
+        self.geometry_cache.update(report.get('mosaic_geometries') or {})
         png_path = report.get('png_path', '')
         txt_path = report.get('txt_path', '')
         if not png_path or not os.path.isfile(png_path) or (not HAVE_PIL):
@@ -55,15 +57,14 @@ class CoverageRenderingMixin:
                 self.state['photo'] = photo
                 self._clear_selection()
                 if report.get('preview_wcs_header'):
-                    self.area_var.set('Grey inside an outline is missing/flat-fill data; colour is usable data. Draw an area; drag inside to move, squares to resize, round handle to rotate.')
+                    source = 'SkyView background loaded.' if report.get('background_online') else 'SkyView unavailable; using the offline sky grid.'
+                    self.area_var.set(source + ' Draw an area; drag inside to move, squares to resize, round handle to rotate.')
                 else:
-                    self.area_var.set('Sky background unavailable; interactive sky selection is disabled.')
+                    self.area_var.set('No celestial preview WCS is available for these inputs.')
             except EXPECTED_OPERATION_ERRORS as exc:
                 messagebox.showerror('WCS coverage failed', f'Could not display coverage PNG:\n{exc}', parent=self.win)
                 return
-            msg = f'Showing: {label}   Saved: {png_path}'
-            if txt_path:
-                msg += f'   Report: {txt_path}'
+            msg = f'Showing: {label}   Saved: {os.path.basename(png_path)}'
             self.msg_var.set(msg)
         valid = report.get('valid', 0)
         invalid = report.get('invalid', 0)
@@ -73,6 +74,7 @@ class CoverageRenderingMixin:
             self.status_var.set(f'{label}: {valid} valid, {invalid} invalid, union {union:.1f}%, overlap {overlap:.1f}%')
         else:
             self.status_var.set(f'{label}: {valid} valid, {invalid} invalid')
+        self._update_output_dimensions()
         if self.on_report is not None:
             try:
                 self.on_report(report)
@@ -93,21 +95,19 @@ class CoverageRenderingMixin:
         overlay_opacity = 0.1 if bool(self.opacity10_var.get()) else 0.55
         show_tile_labels = bool(self.tile_labels_var.get())
         flist = list(filter_list)
+        geometries = dict(self.geometry_cache)
+        geometry_groups = {code: list(self.groups[code]) for code in self.filter_codes}
 
         def _worker():
             try:
+                if not geometries:
+                    geometries.update(build_coverage_mosaic_geometries(geometry_groups))
                 report = create_wcs_coverage_map(self.groups, self.out_dir, selected_filters=flist, title=f'Coverage / holes preview — {label}', sampled_holes=sampled, overlay_opacity=overlay_opacity, show_tile_labels=show_tile_labels)
+                report['mosaic_geometries'] = geometries
             except EXPECTED_OPERATION_ERRORS as exc:
-                err = str(exc)
-                try:
-                    self.win.after(0, lambda: self._apply_error(err))
-                except tk.TclError:
-                    pass
+                self._results.put(('error', str(exc), label))
                 return
-            try:
-                self.win.after(0, lambda: self._apply_report(report, label))
-            except tk.TclError:
-                pass
+            self._results.put(('report', report, label))
         threading.Thread(target=_worker, daemon=True).start()
 
     def show_all(self):

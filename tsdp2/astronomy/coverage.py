@@ -97,102 +97,67 @@ def _normalise_ra_for_coverage(records):
     return out
 
 
-def _coverage_fetch_sky_background(records, width_px=1200, height_px=850, survey_name="DSS2 Red"):
-    """Fetch a small sky-image cutout for the WCS coverage preview.
+def _coverage_offline_background(records, width_px=1200, height_px=850):
+    """A real celestial preview grid, available without any network service."""
+    from PIL import ImageDraw
+    plotted = _normalise_ra_for_coverage(records)
+    coords = np.asarray([point for rec in plotted for point in rec["footprint_plot"]])
+    ra_center = float((coords[:, 0].min() + coords[:, 0].max()) / 2) % 360
+    dec_center = float((coords[:, 1].min() + coords[:, 1].max()) / 2)
+    width = max(float(np.ptp(coords[:, 0])) * abs(np.cos(np.deg2rad(dec_center))) * 1.15, 0.03)
+    height = max(float(np.ptp(coords[:, 1])) * 1.15, 0.03)
+    pixel_scale = max(width / width_px, height / height_px)
+    wcs = WCS(naxis=2)
+    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    wcs.wcs.crval = [ra_center, dec_center]
+    wcs.wcs.crpix = [(width_px + 1) / 2, (height_px + 1) / 2]
+    wcs.wcs.cdelt = [-pixel_scale, pixel_scale]
+    for _ in range(2):
+        x, y = wcs.all_world2pix(coords[:, 0] % 360, coords[:, 1], 0)
+        if not (np.isfinite(x).all() and np.isfinite(y).all()):
+            break
+        factor = max(float(np.ptp(x)) / (width_px * 0.9), float(np.ptp(y)) / (height_px * 0.9), 1.0)
+        if factor > 1:
+            wcs.wcs.cdelt *= factor
+            x, y = wcs.all_world2pix(coords[:, 0] % 360, coords[:, 1], 0)
+        wcs.wcs.crpix += [(width_px - 1) / 2 - (x.min() + x.max()) / 2,
+                         (height_px - 1) / 2 - (y.min() + y.max()) / 2]
+    wcs.array_shape = (height_px, width_px)
+    image = Image.new("RGBA", (width_px, height_px), (24, 28, 34, 255))
+    draw = ImageDraw.Draw(image)
+    for x in range(0, width_px, 100):
+        draw.line((x, 0, x, height_px), fill=(43, 48, 57, 255))
+    for y in range(0, height_px, 100):
+        draw.line((0, y, width_px, y), fill=(43, 48, 57, 255))
+    return {"image": image, "wcs": wcs, "survey": "Offline WCS grid", "online": False,
+            "center_ra": ra_center, "center_dec": dec_center,
+            "width_deg": abs(float(wcs.wcs.cdelt[0])) * width_px,
+            "height_deg": abs(float(wcs.wcs.cdelt[1])) * height_px}
 
-    This does not download a full survey image. It requests one fixed-size
-    cutout around the combined footprint bounding box, then overlays the FITS
-    footprints on that cutout using the cutout WCS.
-    """
+
+def _coverage_fetch_sky_background(records, width_px=1200, height_px=850, survey_name="DSS2 Red"):
+    """Request one bounded FITS cutout directly from NASA over HTTPS."""
     if not HAVE_PIL or not records:
         return None
-    try:
-        from astroquery.skyview import SkyView
-        from astropy.coordinates import SkyCoord
-        import astropy.units as u
-    except EXPECTED_OPERATION_ERRORS as exc:
-        print(f"[WCS coverage] SkyView unavailable: {exc}", flush=True)
+    from tsdp2.astronomy.sky_background import fetch_skyview_fits
+    geometry = _coverage_offline_background(records, width_px, height_px)
+    if max(geometry["width_deg"], geometry["height_deg"]) > 10.0:
+        print("[WCS coverage] Field exceeds the sky cutout limit; using the complete offline WCS grid.", flush=True)
         return None
-
-    try:
-        plot_records = _normalise_ra_for_coverage(records)
-        ras = np.array([pt[0] for rec in plot_records for pt in rec["footprint_plot"]], dtype=float)
-        decs = np.array([pt[1] for rec in plot_records for pt in rec["footprint_plot"]], dtype=float)
-        if not ras.size or not decs.size:
-            return None
-
-        ra_min, ra_max = float(np.nanmin(ras)), float(np.nanmax(ras))
-        dec_min, dec_max = float(np.nanmin(decs)), float(np.nanmax(decs))
-        ra_center_plot = (ra_min + ra_max) / 2.0
-        ra_center = ra_center_plot % 360.0
-        dec_center = (dec_min + dec_max) / 2.0
-
-        ra_span = max(ra_max - ra_min, 1e-5)
-        dec_span = max(dec_max - dec_min, 1e-5)
-
-        # Padding makes the background look like a finder chart instead of a
-        # tight crop. Pixels stay fixed, so this does not explode memory.
-        width_deg = max(ra_span * 1.35, 0.03)
-        height_deg = max(dec_span * 1.35, 0.03)
-
-        # Avoid huge all-sky style requests by capping the angular cutout.
-        width_deg = min(width_deg, 5.0)
-        height_deg = min(height_deg, 5.0)
-
-        center = SkyCoord(ra_center * u.deg, dec_center * u.deg, frame="icrs")
-        surveys = []
-        if survey_name:
-            surveys.append(survey_name)
-        surveys += ["DSS2 Red", "DSS2 Blue", "DSS", "2MASS-K", "WISE 3.4"]
-
-        seen = set()
-        for survey in surveys:
-            if survey in seen:
-                continue
-            seen.add(survey)
-            try:
-                hdul_list = SkyView.get_images(
-                    position=center,
-                    survey=[survey],
-                    width=width_deg * u.deg,
-                    height=height_deg * u.deg,
-                    pixels=[int(width_px), int(height_px)],
-                    cache=True,
-                    show_progress=False,
-                )
-                if not hdul_list:
-                    continue
-                hdu = hdul_list[0][0]
-                data = np.asarray(hdu.data, dtype=np.float32)
-                while data.ndim > 2 and 1 in data.shape:
-                    data = np.squeeze(data)
-                while data.ndim > 2:
-                    data = data[0]
-                if data.ndim != 2:
-                    continue
-                bad = ~np.isfinite(data)
-                if bad.any():
-                    finite = data[np.isfinite(data)]
-                    fill = float(np.nanmedian(finite)) if finite.size else 0.0
-                    data[bad] = fill
-
-                arr = apply_stretch(data, mode="asinh", plo=0.5, phi=99.7)
-                img = Image.fromarray(arr, mode="L").convert("RGBA")
-                w = WCS(hdu.header, naxis=2)
-                return {
-                    "image": img,
-                    "wcs": w,
-                    "survey": survey,
-                    "center_ra": ra_center,
-                    "center_dec": dec_center,
-                    "width_deg": width_deg,
-                    "height_deg": height_deg,
-                }
-            except EXPECTED_OPERATION_ERRORS as exc:
-                print(f"[WCS coverage] SkyView survey failed ({survey}): {exc}", flush=True)
-                continue
-    except EXPECTED_OPERATION_ERRORS as exc:
-        print(f"[WCS coverage] background fetch failed: {exc}", flush=True)
+    for survey in dict.fromkeys([survey_name, "DSS2 Blue"]):
+        try:
+            data, wcs = fetch_skyview_fits(
+                geometry["center_ra"], geometry["center_dec"],
+                geometry["width_deg"], geometry["height_deg"], width_px, height_px,
+                survey=survey)
+            data = np.array(data, copy=True)
+            bad = ~np.isfinite(data)
+            if bad.any():
+                data[bad] = float(np.nanmedian(data[~bad]))
+            image = Image.fromarray(apply_stretch(data, mode="asinh", plo=0.5, phi=99.7)).convert("RGBA")
+            return dict(geometry, image=image, wcs=wcs, survey=survey, online=True)
+        except EXPECTED_OPERATION_ERRORS as exc:
+            print(f"[WCS coverage] SkyView cutout failed ({survey}): {exc}", flush=True)
     return None
 
 
@@ -675,6 +640,8 @@ def _draw_sampled_hole_coverage(img, wcs_bg, records, use_groups, color_by_group
     max_samples = 210 if len(use_groups) <= 1 else (150 if nrec <= 25 else 105)
 
     count = np.zeros((height_px, width_px), dtype=np.uint16)
+    footprint_union = np.zeros((height_px, width_px), dtype=np.uint8)
+    group_masks = {}
     used = 0
     alpha = int(round(255.0 * min(max(float(overlay_opacity), 0.0), 1.0)))
     from PIL import ImageDraw
@@ -684,28 +651,26 @@ def _draw_sampled_hole_coverage(img, wcs_bg, records, use_groups, color_by_group
             rec.get("path", ""), wcs_bg, width_px, height_px,
             max_samples=max_samples, return_stats=True)
         rec["valid_fraction"] = float(valid_fraction)
-        if mask is None or not np.any(mask):
+        if mask is None:
             continue
+        used += 1
         count += (mask > 0).astype(np.uint16)
-        col = color_by_group.get(code, (255, 255, 255, 95))
-        polygon_mask_img = Image.new("L", (width_px, height_px), 0)
+        union = group_masks.setdefault(code, np.zeros((height_px, width_px), dtype=np.uint8))
+        np.maximum(union, mask, out=union)
+        polygon_image = Image.new("L", (width_px, height_px), 0)
         pts = rec.get("preview_polygon") or []
         if len(pts) >= 3:
-            ImageDraw.Draw(polygon_mask_img).polygon(pts, fill=255)
-        polygon_mask = np.asarray(polygon_mask_img, dtype=np.uint8)
-        invalid_mask = np.where(
-            (polygon_mask > 0) & (mask == 0), 255, 0).astype(np.uint8)
-        if np.any(invalid_mask):
-            grey = Image.fromarray(
-                _rgba_from_mask(invalid_mask, (65, 68, 78, alpha)), mode="RGBA")
-            img.alpha_composite(grey)
-        overlay = Image.fromarray(
-            _rgba_from_mask(mask, (col[0], col[1], col[2], alpha)), mode="RGBA")
-        img.alpha_composite(overlay)
-        used += 1
-
+            ImageDraw.Draw(polygon_image).polygon(pts, fill=255)
+        np.maximum(footprint_union, np.asarray(polygon_image), out=footprint_union)
     if used <= 0:
         return False, None, None, None
+    invalid_mask = np.where((footprint_union > 0) & (count == 0), 255, 0).astype(np.uint8)
+    img.alpha_composite(Image.fromarray(_rgba_from_mask(invalid_mask, (65, 68, 78, alpha))))
+    # Apply opacity once per filter; hundreds of overlapping frames must not
+    # turn a ten-percent overlay opaque and hide the sky image.
+    for code, mask in group_masks.items():
+        color = color_by_group.get(code, (255, 255, 255, alpha))
+        img.alpha_composite(Image.fromarray(_rgba_from_mask(mask, (*color[:3], alpha))))
     denom = max(width_px * height_px, 1)
     return True, count, float((count > 0).sum() / denom * 100.0), float((count > 1).sum() / denom * 100.0)
 
@@ -713,15 +678,15 @@ def _draw_sampled_hole_coverage(img, wcs_bg, records, use_groups, color_by_group
 def _draw_wcs_coverage_on_sky_background(records, use_groups, invalid, title, cov_dir,
                                          width_px=1200, height_px=850, sampled_holes=True,
                                          overlay_opacity=0.10,
-                                         show_tile_labels=True, output_path=None):
+                                         show_tile_labels=True, output_path=None, background=None):
     """Draw WCS footprints over a small SkyView cutout if possible."""
     if not HAVE_PIL:
         return None
     from PIL import ImageDraw
 
-    bg = _coverage_fetch_sky_background(records, width_px=width_px, height_px=height_px)
+    bg = background or _coverage_fetch_sky_background(records, width_px=width_px, height_px=height_px)
     if not bg:
-        return None
+        bg = _coverage_offline_background(records, width_px, height_px)
 
     img = bg["image"].copy().convert("RGBA")
     if img.size != (width_px, height_px):
@@ -772,6 +737,24 @@ def _draw_wcs_coverage_on_sky_background(records, use_groups, invalid, title, co
             union_pct = sampled_union
             overlap_pct = sampled_overlap
 
+    if not sampled_used:
+        group_masks = {}
+        for rec in records:
+            pts = list(rec.get("preview_polygon") or [])
+            if len(pts) < 3:
+                continue
+            code = rec.get("group", rec.get("filter", "UNKNOWN"))
+            mask_image = Image.new("L", (width_px, height_px), 0)
+            ImageDraw.Draw(mask_image).polygon(pts, fill=255)
+            mask = np.asarray(mask_image)
+            count += (mask > 0).astype(np.uint16)
+            union = group_masks.setdefault(code, np.zeros((height_px, width_px), dtype=np.uint8))
+            np.maximum(union, mask, out=union)
+        alpha = int(round(255 * min(max(float(overlay_opacity), 0), 1)))
+        for code, mask in group_masks.items():
+            color = color_by_group[code]
+            img.alpha_composite(Image.fromarray(_rgba_from_mask(mask, (*color[:3], alpha))))
+
     for rec in records:
         pts = list(rec.get("preview_polygon") or [])
         if len(pts) < 3:
@@ -780,14 +763,6 @@ def _draw_wcs_coverage_on_sky_background(records, use_groups, invalid, title, co
         fill = color_by_group.get(code, (255, 255, 255, 34))
         edge = edge_by_group.get(code, (255, 255, 255, 235))
 
-        if not sampled_used:
-            # Fallback: old WCS-only polygon fill. It cannot show interior holes.
-            draw.polygon(
-                pts, fill=(fill[0], fill[1], fill[2],
-                           int(round(255 * min(max(float(overlay_opacity), 0.0), 1.0)))))
-            mask = Image.new("L", (width_px, height_px), 0)
-            ImageDraw.Draw(mask).polygon(pts, fill=1)
-            count += np.asarray(mask, dtype=np.uint16)
         draw.line(pts + [pts[0]], fill=edge, width=3)
         # Label each rectangle with the HDU/tile name and actual usable data
         # percentage. A dark label backing keeps it readable over DSS imagery.
@@ -858,6 +833,7 @@ def _draw_wcs_coverage_on_sky_background(records, use_groups, invalid, title, co
         "union_pct": union_pct,
         "overlap_pct": overlap_pct,
         "background_survey": bg["survey"],
+        "background_online": bool(bg.get("online", True)),
         "background_width_deg": bg["width_deg"],
         "background_height_deg": bg["height_deg"],
         "sampled_holes": sampled_used,
@@ -942,103 +918,22 @@ def create_wcs_coverage_map(groups: dict, out_dir: str | JobPaths, selected_filt
     background_survey = ""
     background_note = "Plain WCS plot. No sky background was available."
 
-    # First try the requested finder-chart style: small sky cutout plus footprint boxes.
-    if HAVE_PIL and sky_background:
+    # The online and offline previews share one celestial WCS-aware renderer.
+    sky = None
+    if HAVE_PIL:
+        background = None if sky_background else _coverage_offline_background(records)
         sky = _draw_wcs_coverage_on_sky_background(
             records, use_groups, invalid, title, cov_dir,
             sampled_holes=sampled_holes, overlay_opacity=overlay_opacity,
-            show_tile_labels=show_tile_labels, output_path=sky_png_path)
+            show_tile_labels=show_tile_labels, output_path=sky_png_path,
+            background=background)
         if sky:
-            png_path = sky.get("png_path", "")
+            png_path = sky["png_path"]
             union_pct = sky.get("union_pct")
             overlap_pct = sky.get("overlap_pct")
             background_survey = sky.get("background_survey", "")
-            if sky.get("sampled_holes"):
-                background_note = (
-                    f"Sky background cutout: {background_survey}. "
-                    f"Overlay uses sampled valid-pixel masks, so real holes/chip gaps can appear. "
-                    f"({sky.get('background_width_deg', 0):.3f} deg x "
-                    f"{sky.get('background_height_deg', 0):.3f} deg)."
-                )
-            else:
-                background_note = (
-                    f"Sky background cutout: {background_survey}. "
-                    f"Overlay uses WCS corner footprints only, so interior holes are not visible. "
-                    f"({sky.get('background_width_deg', 0):.3f} deg x "
-                    f"{sky.get('background_height_deg', 0):.3f} deg)."
-                )
-
-    # Fallback: original plain RA/Dec footprint map.
-    if HAVE_PIL and not png_path:
-        from PIL import ImageDraw
-        W, H = 1200, 850
-        margin_l, margin_r, margin_t, margin_b = 80, 210, 60, 80
-        plot_w = W - margin_l - margin_r
-        plot_h = H - margin_t - margin_b
-        img = Image.new("RGBA", (W, H), (255, 255, 255, 255))
-        draw = ImageDraw.Draw(img, "RGBA")
-        draw.rectangle([margin_l, margin_t, margin_l + plot_w, margin_t + plot_h],
-                       outline=(80, 80, 80, 255), fill=(248, 249, 252, 255))
-
-        def xy(ra, dec):
-            x = margin_l + (float(ra) - ra_min) / ra_span * plot_w
-            y = margin_t + (dec_max - float(dec)) / dec_span * plot_h
-            return (int(round(x)), int(round(y)))
-
-        palette = [
-            (37, 99, 235, 70), (22, 163, 74, 70), (220, 38, 38, 70),
-            (217, 119, 6, 70), (126, 34, 206, 70), (8, 145, 178, 70),
-            (219, 39, 119, 70), (71, 85, 105, 70), (101, 163, 13, 70),
-        ]
-        edge_palette = [(r, g, b, 220) for r, g, b, _a in palette]
-        group_codes = sorted(use_groups.keys())
-        color_by_group = {c: palette[i % len(palette)] for i, c in enumerate(group_codes)}
-        edge_by_group = {c: edge_palette[i % len(edge_palette)] for i, c in enumerate(group_codes)}
-
-        count = np.zeros((H, W), dtype=np.uint16)
-        for rec in plot_records:
-            pts = [xy(ra, dec) for ra, dec in rec["footprint_plot"]]
-            code = rec.get("group", rec.get("filter", "UNKNOWN"))
-            fill = color_by_group.get(code, (37, 99, 235, 60))
-            edge = edge_by_group.get(code, (37, 99, 235, 220))
-            draw.polygon(pts, fill=fill, outline=edge)
-            mask = Image.new("L", (W, H), 0)
-            ImageDraw.Draw(mask).polygon(pts, fill=1)
-            count += np.asarray(mask, dtype=np.uint16)
-
-        plot_mask = np.zeros((H, W), dtype=bool)
-        plot_mask[margin_t:margin_t + plot_h + 1, margin_l:margin_l + plot_w + 1] = True
-        denom = max(int(plot_mask.sum()), 1)
-        union_pct = float(((count > 0) & plot_mask).sum() / denom * 100.0)
-        overlap_pct = float(((count > 1) & plot_mask).sum() / denom * 100.0)
-
-        for rec in plot_records:
-            pts = [xy(ra, dec) for ra, dec in rec["footprint_plot"]]
-            code = rec.get("group", rec.get("filter", "UNKNOWN"))
-            draw.line(pts + [pts[0]], fill=edge_by_group.get(code, (37, 99, 235, 230)), width=2)
-
-        draw.text((20, 18), title, fill=(20, 24, 33, 255))
-        draw.text((20, 38), "Header/WCS footprint preview only. No pixel reprojection.",
-                  fill=(90, 96, 112, 255))
-        draw.text((margin_l, H - 58), f"RA span: {ra_span:.5f} deg   Dec span: {dec_span:.5f} deg",
-                  fill=(20, 24, 33, 255))
-        draw.text((margin_l, H - 36), f"Valid footprints: {len(records)}   Invalid/no WCS: {len(invalid)}   Approx union: {union_pct:.1f}%   overlap: {overlap_pct:.1f}%",
-                  fill=(20, 24, 33, 255))
-
-        leg_x = W - margin_r + 20
-        leg_y = margin_t
-        draw.text((leg_x, leg_y - 24), "Filters", fill=(20, 24, 33, 255))
-        for i, code in enumerate(group_codes):
-            y = leg_y + i * 24
-            col = color_by_group[code]
-            draw.rectangle([leg_x, y, leg_x + 16, y + 14], fill=col, outline=edge_by_group[code])
-            draw.text((leg_x + 24, y - 1), f"{code} ({len(use_groups[code])})", fill=(20, 24, 33, 255))
-
-        png_path = os.fspath(
-            job_paths.coverage_map(f"wcs_coverage_{stamp}.png")
-            if job_paths is not None
-            else os.path.join(cov_dir, f"wcs_coverage_{stamp}.png"))
-        img.convert("RGB").save(png_path, "PNG", optimize=True)
+            background_note = (f"Background: {background_survey}. "
+                               "Interactive sky selection remains available with or without SkyView.")
 
     lines = []
     lines.append(title)
@@ -1088,7 +983,7 @@ def create_wcs_coverage_map(groups: dict, out_dir: str | JobPaths, selected_filt
     }
     if "sky" in locals() and sky:
         for key in ("preview_width", "preview_height", "preview_wcs_header", "tiles",
-                    "tile_labels"):
+                    "tile_labels", "background_online"):
             if key in sky:
                 result[key] = sky[key]
     return result

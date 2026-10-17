@@ -16,7 +16,8 @@ def main() -> int:
     if smoke_output:
         from tsdp2.release_smoke import run_release_smoke
 
-        return run_release_smoke(smoke_output)
+        return run_release_smoke(
+            smoke_output, check_skyview=os.environ.get("TSDP_RELEASE_SKY_SMOKE") == "1")
 
     from tsdp2.logging_config import configure_logging
 

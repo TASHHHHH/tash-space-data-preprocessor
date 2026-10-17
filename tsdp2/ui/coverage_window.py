@@ -5,20 +5,29 @@ from tsdp2.logging_config import LOGGER
 from tsdp2.output_paths import JobPaths
 from tsdp2.ui.coverage_selection import CoverageSelectionMixin
 from tsdp2.ui.coverage_rendering import CoverageRenderingMixin
+from tsdp2.ui.coverage_dimensions import CoverageDimensionsMixin
 from tsdp2.ui.theme import force_light_titlebar
 
-class CoverageWindow(CoverageSelectionMixin, CoverageRenderingMixin):
+class CoverageWindow(CoverageDimensionsMixin, CoverageSelectionMixin, CoverageRenderingMixin):
 
-    def __init__(self, parent, groups, filter_codes, out_dir, on_report=None, on_region=None):
+    def __init__(self, parent, groups, filter_codes, out_dir, on_report=None, on_region=None,
+                 global_scale=1.0, filter_scales=None, on_scale=None):
         self.groups = groups
         self.filter_codes = list(filter_codes)
         self.out_dir = out_dir
         self.on_report = on_report
         self.on_region = on_region
+        self.on_scale = on_scale
+        self.filter_scales = dict(filter_scales or {})
+        self.geometry_cache = {}
+        self.output_dimensions = {}
+        self._results = queue.Queue()
+        self._closed = False
         self.win = tk.Toplevel(parent)
         self.win.title('WCS Mosaic Coverage')
         self.win.transient(parent.winfo_toplevel())
-        self.win.geometry('1240x940')
+        self.win.geometry(f'{min(1240, self.win.winfo_screenwidth() - 80)}x{min(940, self.win.winfo_screenheight() - 100)}')
+        self.win.minsize(900, 650)
         try:
             force_light_titlebar(self.win)
         except EXPECTED_OPERATION_ERRORS:
@@ -41,11 +50,13 @@ class CoverageWindow(CoverageSelectionMixin, CoverageRenderingMixin):
         self.opacity10_var = tk.BooleanVar(value=True)
         self.tile_labels_var = tk.BooleanVar(value=False)
         self.rotation_var = tk.DoubleVar(value=0.0)
+        self.scale_var = tk.StringVar(value=str(global_scale))
+        self.output_var = tk.StringVar(value='Output dimensions: calculating native mosaic geometry…')
         view_values = ['All filters'] + filter_codes
         self.view_combo = ttk.Combobox(controls, textvariable=self.view_var, values=view_values, state='readonly', width=20)
         self.view_combo.grid(row=0, column=1, sticky='w', padx=(0, 8))
         self.status_var = tk.StringVar(value='Preparing WCS coverage…')
-        ttk.Label(controls, textvariable=self.status_var, style='Sub.TLabel').grid(row=0, column=9, sticky='e')
+        ttk.Label(controls, textvariable=self.status_var, style='Sub.TLabel', wraplength=1100).grid(row=1, column=0, columnspan=10, sticky='w', pady=(6, 0))
         self.canvas = tk.Canvas(body, highlightthickness=0, background='white')
         self.canvas.grid(row=2, column=0, sticky='nsew', pady=8)
         sx = ttk.Scrollbar(body, orient='horizontal', command=self.canvas.xview)
@@ -58,15 +69,26 @@ class CoverageWindow(CoverageSelectionMixin, CoverageRenderingMixin):
         bottom.columnconfigure(0, weight=1)
         self.msg_var = tk.StringVar(value='')
         self.area_var = tk.StringVar(value='Drag to draw an area; then move, resize, and rotate it with the handles.')
-        ttk.Label(bottom, textvariable=self.area_var).grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 3))
-        ttk.Label(bottom, textvariable=self.msg_var, style='Sub.TLabel').grid(row=1, column=0, sticky='w')
+        scale_row = ttk.Frame(bottom)
+        scale_row.grid(row=0, column=0, columnspan=4, sticky='ew', pady=(0, 6))
+        scale_row.columnconfigure(3, weight=1)
+        ttk.Label(scale_row, text='Output scale:').grid(row=0, column=0, sticky='w', padx=(0, 6))
+        self.scale_spin = ttk.Spinbox(scale_row, from_=0.02, to=1.0, increment=0.05,
+                                     textvariable=self.scale_var, width=7)
+        self.scale_spin.grid(row=0, column=1, sticky='w')
+        ttk.Label(scale_row, text='1 = full, 0.5 = half width/height', style='Sub.TLabel').grid(row=0, column=2, sticky='w', padx=8)
+        self.output_label = ttk.Label(scale_row, textvariable=self.output_var, wraplength=1050,
+                                      font=('Segoe UI', 10, 'bold'), justify='left')
+        self.output_label.grid(row=1, column=0, columnspan=4, sticky='w', pady=(4, 0))
+        ttk.Label(bottom, textvariable=self.area_var, wraplength=1100).grid(row=1, column=0, columnspan=4, sticky='w', pady=(0, 3))
+        ttk.Label(bottom, textvariable=self.msg_var, style='Sub.TLabel', wraplength=650).grid(row=2, column=0, sticky='w')
         clear_area_btn = ttk.Button(bottom, text='Clear selected area')
-        clear_area_btn.grid(row=1, column=1, sticky='e', padx=4)
+        clear_area_btn.grid(row=2, column=1, sticky='e', padx=4)
         self.use_area_btn = ttk.Button(bottom, text='Use selected area for Mosaic', style='Accent.TButton', state='disabled')
-        self.use_area_btn.grid(row=1, column=2, sticky='e', padx=4)
-        ttk.Button(bottom, text='Close', command=self.win.destroy).grid(row=1, column=3, sticky='e', padx=(8, 0))
+        self.use_area_btn.grid(row=2, column=2, sticky='e', padx=4)
+        ttk.Button(bottom, text='Close', command=self._close).grid(row=2, column=3, sticky='e', padx=(8, 0))
         rotation_row = ttk.Frame(bottom)
-        rotation_row.grid(row=2, column=0, columnspan=4, sticky='ew', pady=(6, 0))
+        rotation_row.grid(row=3, column=0, columnspan=4, sticky='ew', pady=(6, 0))
         ttk.Label(rotation_row, text='Selection rotation:').pack(side='left')
         self.rotate_left_btn = ttk.Button(rotation_row, text='−5°', state='disabled')
         self.rotate_left_btn.pack(side='left', padx=(8, 3))
@@ -113,10 +135,33 @@ class CoverageWindow(CoverageSelectionMixin, CoverageRenderingMixin):
         self.win.bind('<Right>', lambda _e: self.next_filter())
         self.win.bind('a', lambda _e: self.show_all())
         self.win.bind('A', lambda _e: self.show_all())
+        self.scale_var.trace_add('write', self._on_scale_changed)
+        self.win.protocol('WM_DELETE_WINDOW', self._close)
+        self._poll_after = self.win.after(40, self._poll_results)
         self.win.after(50, self.show_all)
 
+    def _poll_results(self):
+        if self._closed:
+            return
+        try:
+            while True:
+                kind, payload, label = self._results.get_nowait()
+                if kind == 'report':
+                    self._apply_report(payload, label)
+                else:
+                    self._apply_error(payload)
+        except queue.Empty:
+            pass
+        self._poll_after = self.win.after(40, self._poll_results)
 
-def show_wcs_coverage_window(parent, groups: dict, selected_filters=None, out_dir: str='', on_report=None, on_region=None):
+    def _close(self):
+        self._closed = True
+        self.win.after_cancel(self._poll_after)
+        self.win.destroy()
+
+
+def show_wcs_coverage_window(parent, groups: dict, selected_filters=None, out_dir: str='', on_report=None, on_region=None,
+                             global_scale=1.0, filter_scales=None, on_scale=None):
     """Open a Tk preview window for WCS-only coverage.
 
     The first view shows all selected filters. The user can then cycle through
@@ -136,7 +181,8 @@ def show_wcs_coverage_window(parent, groups: dict, selected_filters=None, out_di
         return None
     if not isinstance(out_dir, JobPaths):
         out_dir = JobPaths.create(out_dir or str(Path.home() / 'JWST_Mosaics'), 'WCS_Coverage')
-    session = CoverageWindow(parent, groups, filter_codes, out_dir, on_report, on_region)
+    session = CoverageWindow(parent, groups, filter_codes, out_dir, on_report, on_region,
+                             global_scale=global_scale, filter_scales=filter_scales, on_scale=on_scale)
     return session.win
 
 __all__ = [name for name in globals() if not name.startswith('__')]

@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(3, 2, 2, 0),
-    prodvers=(3, 2, 2, 0),
+    filevers=(3, 2, 3, 0),
+    prodvers=(3, 2, 3, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,11 +16,11 @@ VSVersionInfo(
         [
           StringStruct(u'CompanyName', u'Tash'),
           StringStruct(u'FileDescription', u'Tash Space Data Preprocessor'),
-          StringStruct(u'FileVersion', u'3.2.2'),
+          StringStruct(u'FileVersion', u'3.2.3'),
           StringStruct(u'InternalName', u'TSDP'),
           StringStruct(u'OriginalFilename', u'TSDP.exe'),
           StringStruct(u'ProductName', u'Tash Space Data Preprocessor'),
-          StringStruct(u'ProductVersion', u'3.2.2')
+          StringStruct(u'ProductVersion', u'3.2.3')
         ]
       )
     ]),
