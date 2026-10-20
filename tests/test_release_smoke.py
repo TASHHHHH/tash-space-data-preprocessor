@@ -12,5 +12,6 @@ def test_release_smoke_exercises_fits_and_reproject(tmp_path):
     payload = json.loads(report.read_text(encoding="utf-8"))
 
     assert payload["ok"] is True
-    assert payload["checks"] == {"fits": True, "reproject": True, "normalization": True}
+    assert payload["checks"] == {"fits": True, "reproject": True, "normalization": True,
+                                  "automatic_repair": True, "draft_interpolation": True}
     assert payload["product"] == "Tash Space Data Preprocessor"

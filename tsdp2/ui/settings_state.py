@@ -111,6 +111,7 @@ class SettingsStateMixin:
                 ("mosaic_retain_intermediates", mosaic.retain_intermediates),
                 ("mosaic_draft_cleanup", mosaic.draft_background_cleanup),
                 ("mosaic_highres_cleanup", mosaic.highres_background_cleanup),
+                ("mosaic_cosmetic_holes", mosaic.cosmetic_draft_holes),
             ):
                 assign(key, variable, _as_bool)
 
@@ -192,6 +193,7 @@ class SettingsStateMixin:
                     "mosaic_highres_cleanup": bool(
                         mosaic.highres_background_cleanup.get()
                     ),
+                    "mosaic_cosmetic_holes": bool(mosaic.cosmetic_draft_holes.get()),
                 }
             )
 
@@ -273,6 +275,7 @@ class SettingsStateMixin:
             mosaic.retain_intermediates.set(False)
             mosaic.draft_background_cleanup.set(True)
             mosaic.highres_background_cleanup.set(True)
+            mosaic.cosmetic_draft_holes.set(True)
 
         if self.aligner is not None:
             aligner = self.aligner

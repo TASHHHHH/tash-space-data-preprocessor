@@ -186,21 +186,30 @@ def _find_science_and_weight_hdus_for_mask(path: str):
 
     for hdu in (() if requested_hdu is not None else hdul):
         hdr = hdu.header
-        if hdu.data is None or int(hdr.get("NAXIS", 0) or 0) < 2:
+        if int(hdr.get("NAXIS", 0) or 0) < 2:
             continue
         extname = str(hdr.get("EXTNAME", "")).strip().upper()
+        if extname in ('WHT','WEIGHT','CON','CTX','DQ','MASK','DQM','BPM','ERR','VAR'):
+            continue
         if extname == "SCI":
             sci_hdu = hdu
             break
         if sci_hdu is None:
             sci_hdu = hdu
 
-    for hdu in (() if requested_hdu is not None else hdul):
+    for hdu in hdul:
         hdr = hdu.header
-        if hdu.data is None or int(hdr.get("NAXIS", 0) or 0) < 2:
+        if int(hdr.get("NAXIS", 0) or 0) < 2:
             continue
         extname = str(hdr.get("EXTNAME", "")).strip().upper()
         if extname in ("WHT", "WEIGHT", "CON", "CTX"):
+            if sci_hdu is None:
+                continue
+            science_header=sci_hdu.header
+            if (hdr.get('NAXIS1'),hdr.get('NAXIS2')) != (science_header.get('NAXIS1'),science_header.get('NAXIS2')):
+                continue
+            if str(hdr.get('EXTVER','')) != str(science_header.get('EXTVER','')):
+                continue
             wht_hdu = hdu
             if extname in ("WHT", "WEIGHT"):
                 break
@@ -448,6 +457,26 @@ def _load_mosaic_2d_and_header(path: str):
             raise RuntimeError(f"No usable 2-D science image in {path}")
         data = np.array(src, dtype=np.float32, copy=True)
         valid = np.isfinite(data)
+
+        # Native DECam saturation thresholds are recorded in the same count
+        # units as its IMAGE extensions. Reject known saturated samples before
+        # reprojection so a clean exposure can supply those sky pixels.
+        if str(hdr.get('INSTRUME','')).strip().upper() == 'DECAM' and not hdr.get('BGNORM'):
+            limits=[]
+            for key in ('SATURATE','SATURATA','SATURATB'):
+                try:
+                    value=float(hdr[key])
+                    if np.isfinite(value) and value>0:
+                        limits.append(value)
+                except (KeyError,ValueError,TypeError):
+                    pass
+            if limits:
+                # Without amplifier sections, the highest threshold avoids
+                # falsely rejecting valid pixels in the higher-range amp.
+                saturated=data>=max(limits)
+                if np.any(saturated):
+                    valid &= ~saturated
+                    mask_note.append('DECam-saturation')
 
         wdata = None
         if wht_hdu is not None:

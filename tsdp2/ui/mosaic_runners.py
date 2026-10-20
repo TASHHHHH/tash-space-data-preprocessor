@@ -3,11 +3,12 @@ from __future__ import annotations
 from tsdp2._deps import *
 from tsdp2.logging_config import LOGGER
 from tsdp2.astronomy.mosaicking import mosaic_filter_group
+from tsdp2.astronomy.mosaic_quality import automatically_repair_mosaic, cosmetically_fill_draft
 from tsdp2.astronomy.regions import _mosaic_filter_scale
 from tsdp2.astronomy.seam_repair import fast_draft_filter_group, repair_existing_mosaic_seams, write_background_clean_fits_copy
 from tsdp2.config import _safe_int
 from tsdp2.models import RunState
-from tsdp2.output_paths import JobManifest, JobPaths, cleanup_job_intermediates
+from tsdp2.output_paths import JobManifest, JobPaths, cleanup_job_intermediates, safe_filename
 
 class MosaicRunner(threading.Thread):
     """Runs mosaic for explicitly grouped FITS files from MosaicTab."""
@@ -17,7 +18,7 @@ class MosaicRunner(threading.Thread):
                  sky_region=None, save_coverage_maps=True, resume_cache=True,
                  draft_mode=False, draft_background_cleanup=True,
                  highres_background_cleanup=True, turbo_fullres=True,
-                 retain_intermediates=False):
+                 retain_intermediates=False, cosmetic_draft_holes=True):
         super().__init__(daemon=True)
         self.groups    = groups    # {filter_code: [path, ...]}
         self.job_paths = out_dir if isinstance(out_dir, JobPaths) else None
@@ -47,6 +48,7 @@ class MosaicRunner(threading.Thread):
         self.highres_background_cleanup = bool(highres_background_cleanup)
         self.turbo_fullres = bool(turbo_fullres)
         self.retain_intermediates = bool(retain_intermediates)
+        self.cosmetic_draft_holes = bool(cosmetic_draft_holes)
         self._stop_event = threading.Event()
         self._started_at = time.time()
         self.manifest = None
@@ -71,6 +73,8 @@ class MosaicRunner(threading.Thread):
                     "resume_cache": self.resume_cache,
                     "turbo_fullres": self.turbo_fullres,
                     "retain_intermediates": self.retain_intermediates,
+                    "automatic_source_repair": True,
+                    "cosmetic_draft_holes": self.cosmetic_draft_holes,
                 },
             )
             self.manifest.save()
@@ -122,12 +126,16 @@ class MosaicRunner(threading.Thread):
         try:
             self._run()
         except EXPECTED_OPERATION_ERRORS as exc:
-            self.send("error", message=str(exc), tb=traceback.format_exc())
-            LOGGER.exception("Mosaic worker failed")
+            if self.stopped():
+                self.send('cancelled',message='Cancelled; existing output preserved.')
+            else:
+                self.send("error", message=str(exc), tb=traceback.format_exc())
+                LOGGER.exception("Mosaic worker failed")
 
     def _run(self):
         n = max(len(self.groups), 1)
         out_paths = {}
+        quality_reports = {}
         for gi, (fcode, paths) in enumerate(sorted(self.groups.items())):
             if self.stopped():
                 self.send("cancelled", message="Cancelled.")
@@ -159,6 +167,30 @@ class MosaicRunner(threading.Thread):
                     resume_cache=self.resume_cache,
                     turbo_fullres=self.turbo_fullres,
                     job_paths=self.job_paths)
+            quality = automatically_repair_mosaic(
+                out, paths, fcode, progress_cb=cb, cancel_cb=self.stopped,
+                report_dir=(self.job_paths.diagnostics / 'quality'
+                            if self.job_paths is not None else None),
+                quality_paths=((self.job_paths.coverage_map(f'coverage_{safe_filename(fcode)}.fits'),
+                                self.job_paths.weight_map(f'weight_{safe_filename(fcode)}.fits'))
+                               if self.job_paths is not None else
+                               (Path(self.out_dir)/f'coverage_{safe_filename(fcode)}.fits',
+                                Path(self.out_dir)/f'weight_{safe_filename(fcode)}.fits')))
+            if self.manifest is not None and quality['remaining_pixels']:
+                self.manifest.warnings.append(
+                    f"{fcode}: {quality['remaining_pixels']} internal no-data pixels "
+                    "could not be recovered from valid originals.")
+            quality_reports[fcode] = quality
+            if self.draft_mode and self.cosmetic_draft_holes:
+                cosmetic=cosmetically_fill_draft(
+                    out,cancel_cb=self.stopped,
+                    mask_path=(self.job_paths.mask(f'draft_interpolation_{safe_filename(fcode)}.fits')
+                               if self.job_paths is not None else None))
+                quality.update(cosmetic)
+                Path(quality['report_path']).write_text(
+                    json.dumps({k:v for k,v in quality.items() if k!='report_path'},indent=2)+'\n',
+                    encoding='utf-8')
+            if not self.draft_mode:
                 if self.highres_background_cleanup:
                     base = Path(out)
                     clean_out = str(base.with_name(base.stem + "_background_clean.fits"))
@@ -169,8 +201,11 @@ class MosaicRunner(threading.Thread):
             out_paths[fcode] = out
 
         self.send("done",
-                  message=f"Complete — {len(out_paths)} filter(s)",
-                  out_paths=out_paths)
+                  message=f"Complete — {len(out_paths)} filter(s); "
+                          f"{sum(r.get('repaired_pixels',0) for r in quality_reports.values())} hole pixels recovered, "
+                          f"{sum(r.get('cosmetic_pixels',0) for r in quality_reports.values())} draft pixels interpolated; "
+                          f"{sum(r['remaining_pixels'] for r in quality_reports.values())} lack measured data.",
+                  out_paths=out_paths,quality_reports=quality_reports)
 
 
 class SeamRepairRunner(threading.Thread):

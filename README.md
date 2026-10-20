@@ -1,10 +1,10 @@
 # Tash Space Data Preprocessor (TSDP)
 
-TSDP 3.2.4 is a Windows desktop application for downloading and processing astronomical FITS data. It supports multi-HDU inputs, WCS-aware mosaics, normalization, alignment, previews, recovery, and optional Telegram control.
+TSDP 3.2.5 is a Windows desktop application for downloading and processing astronomical FITS data. It supports multi-HDU inputs, WCS-aware mosaics, normalization, alignment, previews, recovery, and optional Telegram control.
 
 ## Recommended installation
 
-Run `TSDP-Setup-3.2.4.exe`. The installer uses the current Windows account, supports installing over a previous version, creates Start menu shortcuts, and can optionally create a desktop shortcut. Python is not required for the installed application.
+Run `TSDP-Setup-3.2.5.exe`. The installer uses the current Windows account, supports installing over a previous version, creates Start menu shortcuts, and can optionally create a desktop shortcut. Python is not required for the installed application.
 
 A portable ZIP is also provided. Extract the entire folder before running `TSDP.exe`; do not run the executable from inside the ZIP.
 
@@ -112,3 +112,25 @@ extended emission fills the detectors: a sky model cannot distinguish that
 emission from illumination without an external reference. Full-resolution
 science mosaics retain overlap-only matching; cosmetic cleaned copies are
 separate outputs. See [normalization validation](docs/normalization.md).
+
+## Automatic mosaic quality checks
+
+Every Mosaic-tab run, including Fast Draft, checks its output automatically
+before the cleaned copy is generated. The scan includes single-pixel NaN/Inf
+holes and joins components across scan strips. Enclosed holes are repaired
+from valid original pixels, matched to the surrounding background. Exterior
+no-data areas and valid dark/zero-valued astronomical pixels are preserved.
+After source-backed repair, drafts can cosmetically interpolate remaining enclosed gaps. This is enabled by default and writes an interpolation mask; turn off **Fill remaining draft holes cosmetically** to retain visible gaps. Full-resolution science data is not cosmetically filled.
+
+The completion status reports recovered and remaining pixels. Organized jobs
+save JSON reports in `diagnostics/quality`; flat outputs receive a neighboring
+`*_quality.json`. FITS headers include `AUTOCHK`, `FIXPIX`, and `HOLEPIX`.
+Coverage and relative-weight maps are updated only for measured source recovery. Cosmetic fills retain zero measured coverage, are marked by `COSMFILL`/`COSMPIX`, and have a separate `*_interpolated_mask.fits` (or organized diagnostics mask). Reports distinguish measured recovery from cosmetic interpolation.
+To bound repair work, one automatic pass retains up to 2,000 regions and
+repairs context rectangles of at most two million pixels; deferred regions
+are counted in the quality report. Cancellation preserves the existing image.
+
+Native DECam saturation thresholds exclude known saturated samples. Bright
+star charge trails below those thresholds need supplied bleed-trail masks or
+clean overlapping exposures; the app does not erase bright lines by guessing.
+See [NOIRLab's DECam saturation description](https://noirlab.edu/science/sites/default/files/media/archives/documents/scidoc1203.pdf).
