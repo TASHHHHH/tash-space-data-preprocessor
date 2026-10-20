@@ -58,6 +58,25 @@ def run_release_smoke(output_path: str | Path, *, check_skyview: bool = False) -
         corrections = estimate_background_planes([first, second])
         apply_background_plane(second, corrections[1])
         payload["checks"]["normalization"] = bool(np.allclose(first, second, atol=0.01, rtol=0))
+        from tsdp2.astronomy.mosaic_quality import automatically_repair_mosaic, cosmetically_fill_draft
+        with tempfile.TemporaryDirectory(prefix='tsdp-repair-smoke-') as raw_temp:
+            source_path=Path(raw_temp)/'g.fits'
+            target_path=Path(raw_temp)/'mosaic_G.fits'
+            image=np.random.default_rng(106).normal(100,1,(64,64)).astype(np.float32)
+            header=_test_wcs().to_header()
+            header['FILTER']='G'
+            fits.writeto(source_path,image,header)
+            missing=image.copy()
+            missing[30:33,30:33]=np.nan
+            fits.writeto(target_path,missing,header)
+            repair=automatically_repair_mosaic(target_path,[str(source_path)],'G')
+            payload['checks']['automatic_repair']=bool(
+                repair['repaired_pixels']==9 and repair['remaining_pixels']==0)
+            with fits.open(target_path,mode='update') as hdul:
+                hdul[0].header['FASTDRFT']=True
+                hdul[0].data[20:22,20:22]=np.nan
+            cosmetic=cosmetically_fill_draft(target_path)
+            payload['checks']['draft_interpolation']=bool(cosmetic['cosmetic_pixels']==4)
         if check_skyview:
             from tsdp2.astronomy.sky_background import fetch_skyview_fits
 

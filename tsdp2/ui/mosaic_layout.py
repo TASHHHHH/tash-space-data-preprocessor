@@ -22,6 +22,7 @@ class MosaicLayoutMixin:
         self.draft_scale = tk.StringVar(value="0.08")
         self.draft_background_cleanup = tk.BooleanVar(value=True)
         self.highres_background_cleanup = tk.BooleanVar(value=True)
+        self.cosmetic_draft_holes = tk.BooleanVar(value=True)
         self.seam_strength = tk.StringVar(value="1.0")
         self.scratch_dir = tk.StringVar(
             value=str(Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) /
@@ -198,6 +199,12 @@ class MosaicLayoutMixin:
                   "Fits relative offsets and gradients; preserves shared sky structure.",
                   foreground="gray").grid(row=5, column=0, columnspan=3,
                                            sticky="w", padx=6, pady=(4, 0))
+        ttk.Label(opt, text="Automatic quality check: repair internal holes from valid originals; "
+                  "report remaining gaps.",foreground='gray').grid(
+                      row=6,column=0,columnspan=3,sticky='w',padx=6,pady=(2,0))
+        ttk.Checkbutton(opt,text='Fill remaining draft holes cosmetically (save interpolation mask)',
+                        variable=self.cosmetic_draft_holes).grid(
+                            row=7,column=0,columnspan=3,sticky='w',padx=6,pady=(2,0))
         rb.grid(row=3, column=0, sticky="ew")
         rb.columnconfigure(3, weight=1)
 

@@ -176,7 +176,9 @@ class MosaicProcessingMixin:
             highres_background_cleanup=(
                 bool(self.highres_background_cleanup.get()) and not draft),
             turbo_fullres=(bool(self.turbo_fullres.get()) and not draft),
-            retain_intermediates=bool(self.retain_intermediates.get()))
+            retain_intermediates=bool(self.retain_intermediates.get()),
+            cosmetic_draft_holes=(bool(self.cosmetic_draft_holes.get())
+                                  if hasattr(self,'cosmetic_draft_holes') else True))
         self.mosaic_runner.start()
 
     def cancel_mosaic(self):

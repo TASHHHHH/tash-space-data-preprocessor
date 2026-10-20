@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tsdp2"
-version = "3.2.4"
+version = "3.2.5"
 description = "Tash Space Data Preprocessor: memory-aware FITS mosaicking and WCS alignment"
 readme = "README.md"
 requires-python = ">=3.10"

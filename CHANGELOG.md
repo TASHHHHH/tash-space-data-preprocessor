@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.2.5
+
+- Automatically inspect completed Mosaic-tab science and draft outputs for internal holes, including single-pixel defects, before optional background cleanup.
+- Scan every pixel in bounded strips and join components across strip boundaries; preserve genuinely uncovered exterior sky.
+- Recover holes only from valid original data, with local background matching; respect source weight masks and update coverage/relative-weight maps after recovery.
+- Save quality JSON reports and FITS audit metadata; show recovered and remaining pixel counts at completion.
+- After source-backed auditing, optionally fill remaining enclosed draft gaps cosmetically (enabled by default), with a separate interpolation mask, FITS provenance, and unchanged measured coverage. Never interpolate science outputs.
+- Reject known saturated native DECam samples using header thresholds, and match weight extensions by shape/EXTVER for virtual science inputs.
+- Preselect repair sources using cached projected bounds and avoid decoding unrelated science HDUs during mask discovery.
+- Verify automatic hole repair in the packaged runtime smoke check.
+
 ## 3.2.4
 
 - Replace whole-tile median equalization with robust joint overlap normalization using spatial median cells, outlier rejection, sparse least squares, and regularized tile slopes.

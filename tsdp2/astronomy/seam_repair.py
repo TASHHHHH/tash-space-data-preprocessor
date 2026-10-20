@@ -14,7 +14,8 @@ from tsdp2.recovery.manifests import _copy_file_chunked, _find_internal_nan_boxe
 from tsdp2.utilities.memory import _format_gib
 
 def _fast_repair_fits_holes(target_path, source_paths, output_path,
-                            filter_override="", progress_cb=None, cancel_cb=None):
+                            filter_override="", progress_cb=None, cancel_cb=None,
+                            repair_regions=None, repair_cb=None):
     """Fill only internal NaN islands from original FITS, preserving real data.
 
     The target is copied once. Original tiles are then reprojected only into
@@ -43,8 +44,13 @@ def _fast_repair_fits_holes(target_path, source_paths, output_path,
         target_wcs = WCS(target_header, naxis=2)
         if not target_wcs.has_celestial:
             raise ValueError("Target FITS has no celestial WCS.")
-        boxes = _find_internal_nan_boxes(target_data)
         target_shape = tuple(int(x) for x in target_data.shape)
+        if repair_regions is None:
+            boxes = _find_internal_nan_boxes(target_data)
+        else:
+            boxes = [(max(0,r['box'][0]-32),min(target_shape[0],r['box'][1]+32),
+                      max(0,r['box'][2]-32),min(target_shape[1],r['box'][3]+32))
+                     for r in repair_regions]
         target_filter = (filter_override.strip() or
                          parse_filter_code(str(target_header.get("FILTER", ""))) or "")
         del target_data
@@ -64,6 +70,24 @@ def _fast_repair_fits_holes(target_path, source_paths, output_path,
             f"No loaded original FITS group matches '{target_filter}'. Available: " +
             ", ".join(sorted(groups)))
 
+    source_geometry = []
+    for source in selected_sources:
+        try:
+            header_inputs,_names=_recovery_header_inputs([source])
+            for data_shape,header in header_inputs:
+                bounds=None
+                try:
+                    footprint=WCS(header,naxis=2).calc_footprint(
+                        axes=(data_shape.shape[1],data_shape.shape[0]))
+                    px,py=target_wcs.all_world2pix(footprint[:,0],footprint[:,1],0)
+                    if np.all(np.isfinite(px)) and np.all(np.isfinite(py)):
+                        bounds=(float(np.min(py)),float(np.max(py)),float(np.min(px)),float(np.max(px)))
+                except EXPECTED_OPERATION_ERRORS:
+                    LOGGER.debug('Could not precompute repair source bounds',exc_info=True)
+                source_geometry.append((source,data_shape.shape,header,bounds))
+        except EXPECTED_OPERATION_ERRORS:
+            LOGGER.debug('Skipped invalid repair source header',exc_info=True)
+
     _copy_file_chunked(target_path, temp_path, progress_cb=progress_cb, cancel_cb=cancel_cb)
     repaired = 0
     remaining = 0
@@ -82,6 +106,15 @@ def _fast_repair_fits_holes(target_path, source_paths, output_path,
                     raise RuntimeError("Hole repair cancelled by user.")
                 block = out_data[y0:y1, x0:x1]
                 hole = ~np.isfinite(block)
+                if repair_regions is not None:
+                    # Only this exact enclosed component; nearby exterior gaps
+                    # may also be present in the context rectangle.
+                    from scipy.ndimage import label as label_components
+                    local_labels,_ = label_components(hole)
+                    sy,sx=repair_regions[box_index-1]['seed']
+                    component=int(local_labels[sy-y0,sx-x0])
+                    hole=local_labels==component if component else np.zeros(hole.shape,dtype=bool)
+                    del local_labels
                 if not np.any(hole):
                     continue
                 bh, bw = block.shape
@@ -90,13 +123,19 @@ def _fast_repair_fits_holes(target_path, source_paths, output_path,
                 crop_wcs = out_wcs.deepcopy()
                 crop_wcs.wcs.crpix = np.asarray(crop_wcs.wcs.crpix, dtype=float) - [x0, y0]
 
-                for source in selected_sources:
+                for source,source_shape,geometry_header,bounds in source_geometry:
                     jobs_done += 1
                     if progress_cb:
                         progress_cb(jobs_done, total_jobs,
                                     f"Repairing hole region {box_index}/{len(boxes)} from original tiles")
                     if cancel_cb and cancel_cb():
                         raise RuntimeError("Hole repair cancelled by user.")
+                    if bounds is not None and (bounds[1]<y0 or bounds[0]>=y1 or
+                                               bounds[3]<x0 or bounds[2]>=x1):
+                        continue
+                    if bounds is None and not _source_overlaps_repair_box(
+                            geometry_header,source_shape,out_wcs,(y0,y1,x0,x1)):
+                        continue
                     hdul = None
                     try:
                         found = _find_science_and_weight_hdus_for_mask(source)
@@ -110,6 +149,9 @@ def _fast_repair_fits_holes(target_path, source_paths, output_path,
                                 source_header, source_data.shape, out_wcs,
                                 (y0, y1, x0, x1)):
                             continue
+                        # Match the mosaic loader's weight/no-data/saturation
+                        # rules; never recover holes from invalid raw pixels.
+                        source_data, source_header = _load_mosaic_2d_and_header(source)
                         arr, footprint = reproject_interp(
                             (source_data, source_header), crop_wcs,
                             shape_out=(bh, bw), block_size=(512, 512),
@@ -121,7 +163,11 @@ def _fast_repair_fits_holes(target_path, source_paths, output_path,
                         # carried an x/y gradient.
                         overlap = good & np.isfinite(block)
                         overlap_count = int(np.count_nonzero(overlap))
-                        if overlap_count >= 64:
+                        if overlap_count < 16:
+                            # A normalized mosaic needs enough surrounding sky
+                            # to put the replacement on its existing zero point.
+                            continue
+                        if overlap_count >= 16:
                             oy, ox = np.nonzero(overlap)
                             if oy.size > 200000:
                                 stride = max(1, oy.size // 200000)
@@ -174,17 +220,19 @@ def _fast_repair_fits_holes(target_path, source_paths, output_path,
                     block[fill] = acc[fill] / count[fill]
                     out_data[y0:y1, x0:x1] = block
                     repaired += int(np.count_nonzero(fill))
+                    if repair_cb is not None:
+                        repair_cb((y0,y1,x0,x1),fill,count)
                 remaining += int(np.count_nonzero(hole & (count == 0)))
                 del acc, count, hole, block
                 try:
                     out_hdul.flush()
                 except EXPECTED_OPERATION_ERRORS:
                     LOGGER.debug("Best-effort operation failed", exc_info=True)
+            del out_data
             out_hdu.header["HOLEREP"] = (True, "NaN holes repaired from original FITS")
             out_hdu.header["HISTORY"] = (
                 f"Localized hole repair: {repaired} pixels filled from {len(selected_sources)} source tiles")
             out_hdul.flush()
-            del out_data
             del out_hdu
         gc.collect()
 
@@ -428,14 +476,9 @@ def fast_draft_filter_group(paths, out_dir, filter_code,
     else:
         mosaic = _feather_mosaic(tiles).astype(np.float32, copy=False)
 
-    mosaic, draft_filled_pixels, draft_filled_components = \
-        _fill_enclosed_draft_holes(mosaic)
-    if draft_filled_pixels:
-        print(
-            f"[Fast Draft] {filter_code}: cosmetically filled "
-            f"{draft_filled_pixels} enclosed no-data pixels in "
-            f"{draft_filled_components} component(s); edge gaps preserved",
-            flush=True)
+    # Leave missing samples visible for the automatic source-backed audit.
+    # Interpolating them here would hide holes from the repair pass.
+    draft_filled_pixels = draft_filled_components = 0
 
     draft_flat_rms = 0.0
     draft_flat_peak = 0.0
