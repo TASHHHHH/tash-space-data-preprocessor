@@ -1,10 +1,10 @@
 # Tash Space Data Preprocessor (TSDP)
 
-TSDP 3.2.3 is a Windows desktop application for downloading and processing astronomical FITS data. It supports multi-HDU inputs, WCS-aware mosaics, normalization, alignment, previews, recovery, and optional Telegram control.
+TSDP 3.2.4 is a Windows desktop application for downloading and processing astronomical FITS data. It supports multi-HDU inputs, WCS-aware mosaics, normalization, alignment, previews, recovery, and optional Telegram control.
 
 ## Recommended installation
 
-Run `TSDP-Setup-3.2.3.exe`. The installer uses the current Windows account, supports installing over a previous version, creates Start menu shortcuts, and can optionally create a desktop shortcut. Python is not required for the installed application.
+Run `TSDP-Setup-3.2.4.exe`. The installer uses the current Windows account, supports installing over a previous version, creates Start menu shortcuts, and can optionally create a desktop shortcut. Python is not required for the installed application.
 
 A portable ZIP is also provided. Extract the entire folder before running `TSDP.exe`; do not run the executable from inside the ZIP.
 
@@ -94,3 +94,21 @@ The Mosaic tab enables **Auto (safe RAM)** by default. It selects per-group work
 The WCS coverage window includes an output scale control and live output dimensions for each selected filter. Resize, move, or rotate an area to update its width x height in output pixels. Scale changes are synchronized with the Mosaic tab; per-filter scale overrides continue to apply and each readout shows its effective scale.
 
 SkyView cutouts use a bounded HTTPS FITS request. If the service is unavailable, a celestial WCS grid keeps selection and size estimation usable offline. A ten-percent coverage overlay is composited once per filter, so repeated frames do not hide the background.
+
+## Mosaic background normalization
+
+Mosaics automatically use robust overlap matching: spatial median cells reject
+star/cosmic-ray residuals, then a joint sparse fit estimates relative additive
+sky offsets and gradients. This replaces whole-tile histogram matching, which
+could mistake a galaxy for background. Mean, median and feather modes use the
+same model in RAM and on disk. No photometric gain is applied. One reference
+plane is retained per connected component; a common gradient cannot be measured
+from overlap differences alone.
+
+For Fast Draft, **Source-masked draft sky normalization** additionally estimates
+sky planes from each detector's clipped spatial cells before blending. This
+reduces steps across detector gaps. Disable it for an overlap-only draft when
+extended emission fills the detectors: a sky model cannot distinguish that
+emission from illumination without an external reference. Full-resolution
+science mosaics retain overlap-only matching; cosmetic cleaned copies are
+separate outputs. See [normalization validation](docs/normalization.md).

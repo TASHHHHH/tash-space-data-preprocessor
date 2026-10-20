@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.2.4
+
+- Replace whole-tile median equalization with robust joint overlap normalization using spatial median cells, outlier rejection, sparse least squares, and regularized tile slopes.
+- Use the same additive sky model for mean, median, feather, disk-backed mosaics, drafts, and seam repair; keep disconnected science tiles independent.
+- Replace draft high-pass cleanup with optional source-masked per-detector sky fitting before blending, including a scalar fallback for sparse sky cells.
+- Preserve finite-data masks, photometric gains, and the reference sky plane in overlap-only mode; record normalization in FITS headers.
+- Invalidate previously combined resume caches when the normalization method changes.
+- Bound sampling to 8 million float pixels across tiles and remove duplicate draft correction arrays and scratch copies.
+- Exercise the new sparse solver in the packaged-runtime smoke check.
+
 ## 3.2.3
 
 - Fetch SkyView FITS backgrounds through NASA's direct HTTPS interface, without importing astroquery's unrelated VO/SAMP dependencies; bound request size/time and cache recent cutouts.

@@ -134,11 +134,20 @@ def _combine_in_memory_mosaic(combine, data, filter_code, hdr, inputs, n_tiles, 
             done_count[0] += 1
             if progress_cb:
                 progress_cb(n_tiles + done_count[0], n_tiles * 2 + 2, f'Reprojected {filter_code} tile {done_count[0]}/{n_tiles}…')
+    if progress_cb:
+        progress_cb(n_tiles * 2 + 1, n_tiles * 2 + 2, f'Robust overlap normalization of {n_tiles} tile(s)…')
+    tiles = _sky_match_tiles(tiles, inplace=True)
     if combine == 'feather':
-        if progress_cb:
-            progress_cb(n_tiles * 2 + 1, n_tiles * 2 + 2, f'Sky-matching + feathering {n_tiles} tile(s)…')
-        tiles = _sky_match_tiles(tiles, inplace=True)
         mosaic = _feather_mosaic(tiles)
+    elif combine in ('mean', 'average'):
+        total = np.zeros(shape_out, dtype=np.float32)
+        count = np.zeros(shape_out, dtype=np.uint32)
+        for tile in tiles:
+            valid = np.isfinite(tile)
+            np.add(total, tile, out=total, where=valid)
+            count += valid
+        mosaic = np.full(shape_out, np.nan, dtype=np.float32)
+        np.divide(total, count, out=mosaic, where=count > 0)
     else:
         if progress_cb:
             progress_cb(n_tiles * 2 + 1, n_tiles * 2 + 2, f'nanmedian across {n_tiles} tile(s)…')
@@ -163,6 +172,7 @@ def _write_mosaic_products(combine, downscale, filter_code, job_paths, mosaic, n
     os.makedirs(out_dir, exist_ok=True)
     hdr_out = wcs_out.to_header()
     hdr_out['FILTER'] = filter_code
+    hdr_out['BGNORM'] = ('robust-overlap-v1', 'Relative additive overlap normalization')
     hdr_out['HISTORY'] = f'Mosaic {n_tiles} tiles combine={combine} workers={workers} memory_safe={use_disk} turbo={bool(use_disk and workers > 1)} downscale={downscale:g}'
     if sky_region:
         hdr_out['SKYCROP'] = (True, 'Interactive WCS coverage area applied')
@@ -306,7 +316,7 @@ def mosaic_filter_group(paths, out_dir, filter_code, combine='median', progress_
     try:
         if use_disk and combine in ('median', 'mean', 'average', 'feather'):
             mosaic, tmp_dir, tile_mm_paths = _combine_disk_backed_mosaic(combine, crop_bounds, downscale, filter_code, inputs, n_tiles, out_dir, out_path, paths, progress_cb, resume_cache, scratch_dir, shape_out, sky_region, turbo_fullres, wcs_out, workers)
-        elif combine in ('median', 'feather'):
+        elif combine in ('median', 'feather', 'mean', 'average'):
             mosaic, tiles = _combine_in_memory_mosaic(combine, data, filter_code, hdr, inputs, n_tiles, progress_cb, shape_out, wcs_out, workers, block_workers=block_workers)
         else:
             mosaic, _fp = _combine_coadd_mosaic(combine, filter_code, inputs, n_tiles, progress_cb, shape_out, wcs_out, workers)

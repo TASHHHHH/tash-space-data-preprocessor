@@ -173,33 +173,12 @@ def _prefer_drc_over_drz(paths):
 
 
 def _sky_match_tiles(tiles, *, inplace=False):
-    """
-    Shift each tile so all share the same sigma-clipped sky level as tile 0.
-    Works on the reprojected tiles (may contain NaN where there's no data).
-    """
-    if len(tiles) <= 1:
-        return list(tiles)
-
-    def _sky(arr):
-        finite = arr[np.isfinite(arr)].ravel()
-        if finite.size < 200:
-            return 0.0
-        med = float(np.median(finite))
-        std = float(np.std(finite))
-        clipped = finite[np.abs(finite - med) < 3.0 * std]
-        return float(np.median(clipped)) if clipped.size > 10 else med
-
-    ref_sky = _sky(tiles[0])
-    matched = [tiles[0]]
-    for tile in tiles[1:]:
-        offset = ref_sky - _sky(tile)
-        if abs(offset) > 0:
-            print(f"[Mosaic] sky-match: tile offset = {offset:+.4f} e/s", flush=True)
-        if inplace:
-            tile += offset
-            matched.append(tile)
-        else:
-            matched.append(tile + offset)
+    """Match co-spatial sky differences, preserving extended source structure."""
+    from tsdp2.astronomy.background_matching import estimate_background_planes, apply_background_plane
+    corrections = estimate_background_planes(tiles)
+    matched = list(tiles) if inplace else [tile.copy() for tile in tiles]
+    for tile, correction in zip(matched, corrections):
+        apply_background_plane(tile, correction)
     return matched
 
 
