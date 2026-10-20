@@ -175,6 +175,7 @@ def test_real_draft_runner_audits_and_marks_optional_interpolation(fits_factory,
         assert np.isnan(fits.getdata(result)[45:50,45:50]).all()
     assert messages[-1]['quality_reports']['G']['remaining_pixels']>=25
     assert fits.getheader(result)['AUTOCHK']
+    assert fits.getheader(result)['BGCLMETH']=='global-source-masked-v1'
 
 
 @pytest.mark.parametrize('draft',[True,False])
@@ -196,7 +197,7 @@ def test_runner_audits_automatically_before_clean_copy_and_done(draft,fits_facto
     runner=module.MosaicRunner({'G':[str(source)]},str(tmp_path),'feather',queue,draft_mode=draft,
                                cosmetic_draft_holes=False)
     runner._run()
-    assert events==(['audit'] if draft else ['audit','clean'])
+    assert events==['audit','clean']
     messages=[]
     while not queue.empty():messages.append(queue.get())
     assert messages[-1]['step']=='done'

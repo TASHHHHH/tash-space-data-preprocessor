@@ -77,6 +77,12 @@ def run_release_smoke(output_path: str | Path, *, check_skyview: bool = False) -
                 hdul[0].data[20:22,20:22]=np.nan
             cosmetic=cosmetically_fill_draft(target_path)
             payload['checks']['draft_interpolation']=bool(cosmetic['cosmetic_pixels']==4)
+        from tsdp2.astronomy.global_background import estimate_global_background, global_correction_block
+        gy,gx=np.mgrid[:96,:128]
+        visual=(100+.1*gx+.04*gy+12*(gy>45)+np.random.default_rng(54).normal(0,.3,gx.shape)).astype(np.float32)
+        field,_mask,global_report=estimate_global_background(visual)
+        flat=visual-global_correction_block(field,visual.shape,global_report['sample_step'],0,len(visual))
+        payload['checks']['global_normalization']=bool(np.std(flat)<np.std(visual)*.3 and abs(np.median(flat))<1)
         if check_skyview:
             from tsdp2.astronomy.sky_background import fetch_skyview_fits
 

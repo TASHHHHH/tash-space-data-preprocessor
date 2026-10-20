@@ -547,64 +547,24 @@ def _bilinear_field_block(field, output_shape, y0, y1):
     return (top * (1.0 - wy) + bottom * wy).astype(np.float32, copy=False)
 
 
-def _estimate_streaming_background_correction(data, strength=0.90):
-    """Estimate a small cosmetic detector-background field from a 2-D array.
-
-    Only a sparse sample of each large cell is read, so this also works on a
-    multi-gigabyte FITS memmap without allocating a full-size temporary image.
-    """
-    if data is None or getattr(data, "ndim", 0) != 2:
-        return None, 0.0, 0.0
-    h, w = int(data.shape[0]), int(data.shape[1])
-    if min(h, w) < 64:
-        return None, 0.0, 0.0
-    block = max(20, min(2048, int(round(min(h, w) / 28.0))))
-    gh = max(3, int(np.ceil(h / block)))
-    gw = max(3, int(np.ceil(w / block)))
-    background = np.full((gh, gw), np.nan, dtype=np.float32)
-    for gy in range(gh):
-        y0, y1 = gy * block, min(h, (gy + 1) * block)
-        for gx in range(gw):
-            x0, x1 = gx * block, min(w, (gx + 1) * block)
-            patch_pixels = max(1, (y1 - y0) * (x1 - x0))
-            sample_step = max(1, int(np.ceil(np.sqrt(patch_pixels / 50000.0))))
-            patch = np.asarray(
-                data[y0:y1:sample_step, x0:x1:sample_step], dtype=np.float32)
-            values = patch[np.isfinite(patch)]
-            if values.size >= max(32, int(patch.size * 0.20)):
-                background[gy, gx] = np.float32(np.percentile(values, 18.0))
-
-    good = np.isfinite(background)
-    if int(np.count_nonzero(good)) < max(9, int(background.size * 0.35)):
-        return None, 0.0, 0.0
-    if not np.all(good):
-        _dist, nearest = distance_transform_edt(
-            ~good, return_distances=True, return_indices=True)
-        background[~good] = background[tuple(nearest)][~good]
-
-    local = gaussian_filter(background, sigma=0.75, mode="nearest")
-    broad = gaussian_filter(
-        background, sigma=max(3.0, min(background.shape) / 5.5), mode="nearest")
-    residual = (local - broad).astype(np.float32, copy=False)
-    residual -= np.float32(np.median(residual))
-    mad = float(np.median(np.abs(residual)))
-    robust_sigma = max(1e-6, 1.4826 * mad)
-    limit = max(3.5 * robust_sigma,
-                float(np.percentile(np.abs(residual), 90.0)))
-    strength = min(max(float(strength), 0.0), 1.0)
-    field = np.clip(residual, -limit, limit) * np.float32(strength)
-    rms = float(np.sqrt(np.mean(np.square(field, dtype=np.float64))))
-    peak = float(np.max(np.abs(field)))
-    return field.astype(np.float32, copy=False), rms, peak
+def _estimate_streaming_background_correction(data, strength=1.0):
+    """Compatibility wrapper for the full-field, source-masked sky model."""
+    from tsdp2.astronomy.global_background import estimate_global_background
+    field,_mask,report=estimate_global_background(data)
+    field *= np.float32(strength)
+    return field,report['correction_rms']*strength,report['correction_peak']*strength
 
 
-def write_background_clean_fits_copy(input_path, output_path, strength=0.90,
+def write_background_clean_fits_copy(input_path, output_path, strength=1.0,
                                      progress_cb=None, cancel_cb=None):
     """Write a WCS-preserving, cosmetically background-cleaned FITS copy.
 
     The source file is never modified. The copy and correction are streamed in
     bounded blocks so a 4+ GB mosaic does not need to fit in RAM.
     """
+    strength=float(strength)
+    if not np.isfinite(strength) or not 0 <= strength <= 1:
+        raise ValueError("Global normalization strength must be between 0 and 1.")
     input_path = os.path.abspath(os.fspath(input_path))
     output_path = os.path.abspath(os.fspath(output_path))
     if input_path == output_path:
@@ -635,10 +595,11 @@ def write_background_clean_fits_copy(input_path, output_path, strength=0.90,
             raise RuntimeError("The selected FITS has no celestial WCS to preserve.")
         if progress_cb:
             progress_cb(10, 100, "Sampling the high-resolution detector background")
-        field, model_rms, model_peak = _estimate_streaming_background_correction(
-            source_data, strength=strength)
-        if field is None:
-            raise RuntimeError("Could not estimate a reliable background correction.")
+        from tsdp2.astronomy.global_background import estimate_global_background, global_correction_block
+        field, _source_mask, model_report = estimate_global_background(source_data)
+        field *= np.float32(strength)
+        model_rms=model_report['correction_rms']*strength
+        model_peak=model_report['correction_peak']*strength
     finally:
         try:
             del source_data
@@ -676,13 +637,14 @@ def write_background_clean_fits_copy(input_path, output_path, strength=0.90,
             if output_data is None or tuple(output_data.shape) != shape:
                 raise RuntimeError("The copied FITS science dimensions changed unexpectedly.")
             h, w = shape
-            rows = max(16, min(512, int((128 * 1024 * 1024) // max(1, w * 8))))
+            rows = max(1, min(256, int((32 * 1024 * 1024) // max(1, w * 24))))
             for y0 in range(0, h, rows):
                 if cancel_cb and cancel_cb():
                     raise RuntimeError("Background cleanup cancelled by user.")
                 y1 = min(h, y0 + rows)
                 block = np.asarray(output_data[y0:y1], dtype=np.float32)
-                correction = _bilinear_field_block(field, shape, y0, y1)
+                correction = global_correction_block(
+                    field, shape, model_report['sample_step'], y0, y1)
                 finite = np.isfinite(block)
                 if np.any(finite):
                     used = correction[finite].astype(np.float64, copy=False)
@@ -694,22 +656,26 @@ def write_background_clean_fits_copy(input_path, output_path, strength=0.90,
                 if progress_cb:
                     progress_cb(45 + int(54 * y1 / max(h, 1)), 100,
                                 f"Cleaning high-resolution rows {y1:,}/{h:,}")
-            for header in (output_hdul[0].header, output_hdu.header):
-                for key in ("CHECKSUM", "DATASUM"):
-                    try:
-                        del header[key]
-                    except EXPECTED_OPERATION_ERRORS:
-                        LOGGER.debug("Best-effort operation failed", exc_info=True)
             exact_rms = float(np.sqrt(sum_sq / max(corrected_count, 1)))
-            output_hdu.header["BGCLEAN"] = (True, "Cosmetic detector background cleanup")
-            output_hdu.header["BGCLSTR"] = (float(strength), "Background cleanup strength")
-            output_hdu.header["BGCLRMS"] = (exact_rms, "RMS cosmetic correction")
-            output_hdu.header["BGCLPEAK"] = (float(actual_peak), "Peak cosmetic correction")
-            output_hdu.header.add_history(
-                "TSDP high-resolution background-cleaned copy; original preserved")
+            del block, output_data, output_hdu
             output_hdul.flush(output_verify="silentfix")
-            del output_data
-            del output_hdu
+        del output_hdul
+        # Edit provenance without loading science pixels, so FITS header growth
+        # never invalidates a live Windows mmap.
+        with fits.open(temp_path, mode='update', memmap=True) as metadata:
+            for header in (metadata[0].header, metadata[source_index].header):
+                for key in ('CHECKSUM','DATASUM'):
+                    header.remove(key, ignore_missing=True)
+            header=metadata[source_index].header
+            header['BGCLEAN']=(True,'Global visual background equalization')
+            header['BGCLMETH']='global-source-masked-v1'
+            header['BGCLSTR']=(strength,'Global correction strength')
+            header['BGCLRMS']=(exact_rms,'RMS additive correction')
+            header['BGCLPEAK']=(float(actual_peak),'Peak additive correction')
+            header['BGSRCFR']=(model_report['protected_fraction'],'Source-masked sample fraction')
+            header['BGSKY0']=(model_report['target_sky'],'Common visual sky level')
+            header.add_history('Full-field source-masked background equalization; additive correction only')
+            metadata.flush()
         gc.collect()
 
         with fits.open(temp_path, memmap=True, lazy_load_hdus=True) as check:
@@ -727,6 +693,7 @@ def write_background_clean_fits_copy(input_path, output_path, strength=0.90,
             "output_path": output_path, "shape": shape, "strength": float(strength),
             "rms": exact_rms, "peak": float(actual_peak),
             "model_rms": float(model_rms), "model_peak": float(model_peak),
+            "model": model_report,
         }
     except EXPECTED_OPERATION_ERRORS:
         try:
