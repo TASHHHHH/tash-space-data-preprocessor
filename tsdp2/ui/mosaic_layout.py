@@ -172,10 +172,10 @@ class MosaicLayoutMixin:
         ttk.Spinbox(xrow, from_=0.02, to=0.25, increment=0.01,
                     textvariable=self.draft_scale, width=6).pack(side="left")
         ttk.Checkbutton(
-            xrow, text="Source-masked draft sky normalization",
+            xrow, text="Global + detector sky normalization (draft)",
             variable=self.draft_background_cleanup).pack(side="left", padx=(16, 6))
         ttk.Checkbutton(
-            xrow, text="Also write cleaned high-res copy",
+            xrow, text="Also write globally normalized high-res copy",
             variable=self.highres_background_cleanup).pack(side="left", padx=(16, 6))
 
         turbo_row = ttk.Frame(opt)

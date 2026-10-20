@@ -1,10 +1,10 @@
 # Tash Space Data Preprocessor (TSDP)
 
-TSDP 3.2.5 is a Windows desktop application for downloading and processing astronomical FITS data. It supports multi-HDU inputs, WCS-aware mosaics, normalization, alignment, previews, recovery, and optional Telegram control.
+TSDP 3.2.6 is a Windows desktop application for downloading and processing astronomical FITS data. It supports multi-HDU inputs, WCS-aware mosaics, normalization, alignment, previews, recovery, and optional Telegram control.
 
 ## Recommended installation
 
-Run `TSDP-Setup-3.2.5.exe`. The installer uses the current Windows account, supports installing over a previous version, creates Start menu shortcuts, and can optionally create a desktop shortcut. Python is not required for the installed application.
+Run `TSDP-Setup-3.2.6.exe`. The installer uses the current Windows account, supports installing over a previous version, creates Start menu shortcuts, and can optionally create a desktop shortcut. Python is not required for the installed application.
 
 A portable ZIP is also provided. Extract the entire folder before running `TSDP.exe`; do not run the executable from inside the ZIP.
 
@@ -134,3 +134,25 @@ Native DECam saturation thresholds exclude known saturated samples. Bright
 star charge trails below those thresholds need supplied bleed-trail masks or
 clean overlapping exposures; the app does not erase bright lines by guessing.
 See [NOIRLab's DECam saturation description](https://noirlab.edu/science/sites/default/files/media/archives/documents/scidoc1203.pdf).
+
+## Global visual normalization
+
+Draft sky normalization and the separate high-resolution normalized copy now
+apply a full-field source-masked model after the relative overlap stage.
+This removes broad illumination and remaining detector pedestals, including
+areas that do not have overlapping exposures, and sets each band's visual sky
+to zero. Multiscale structure masks stars and resolved sources; clipped sky
+cells interpolate beneath them. A source-free local median surface follows
+background discontinuities. Pixel values retain their original linear flux
+scale: this is additive sky subtraction, without multiplicative gain fitting.
+
+The global stage runs before cosmetic draft hole filling. Raw science mosaics
+and original input FITS are preserved. The high-resolution normalized copy is
+a visual background-subtracted product, not an absolute sky calibration.
+Very faint diffuse emission can be confused with background without a supplied
+source mask or an external sky reference; use the original science output for
+measurements. FITS flags `BGCLMETH`, `BGSRCFR`, `BGSKY0`, and `BGCLSTR` describe
+the operation, and quality JSON includes its model summary.
+
+Analysis is capped at 500,000 sample pixels; full-resolution application is
+streamed in row blocks. See [global normalization validation](docs/global-normalization.md).

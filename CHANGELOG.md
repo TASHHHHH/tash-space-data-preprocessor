@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.2.6
+
+- Add full-field global visual normalization after relative detector matching: remove broad illumination gradients and remaining detector pedestals, and use a common zero sky level across bands.
+- Detect compact and resolved sources at multiple scales, protect them while fitting clipped sky cells, and use a source-free median surface to follow background discontinuities.
+- Apply automatically to normalized drafts before cosmetic hole filling and to the separate normalized high-resolution copy at full strength by default. Preserve the original science mosaic and do not apply multiplicative photometric gains.
+- Bound analysis to 500,000 sampled pixels and stream corrections in small row blocks, with cancellation and atomic output replacement.
+- Record global normalization method, source-mask fraction and sky target in FITS headers and job quality reports.
+- Validate source contrast, unit scaling, coverage, masks, streamed FITS parity and cancellation; exercise the global model in the packaged-runtime smoke check.
+
 ## 3.2.5
 
 - Automatically inspect completed Mosaic-tab science and draft outputs for internal holes, including single-pixel defects, before optional background cleanup.

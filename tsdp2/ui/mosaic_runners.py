@@ -181,23 +181,31 @@ class MosaicRunner(threading.Thread):
                     f"{fcode}: {quality['remaining_pixels']} internal no-data pixels "
                     "could not be recovered from valid originals.")
             quality_reports[fcode] = quality
+            if self.draft_mode and self.draft_background_cleanup:
+                normalized=str(Path(out).with_name(Path(out).stem+'_global_normalized.fits'))
+                result=write_background_clean_fits_copy(
+                    out,normalized,strength=1.0,progress_cb=cb,cancel_cb=self.stopped)
+                os.replace(result['output_path'],out)
+                quality['global_background']=result.get('model',{})
             if self.draft_mode and self.cosmetic_draft_holes:
                 cosmetic=cosmetically_fill_draft(
                     out,cancel_cb=self.stopped,
                     mask_path=(self.job_paths.mask(f'draft_interpolation_{safe_filename(fcode)}.fits')
                                if self.job_paths is not None else None))
                 quality.update(cosmetic)
-                Path(quality['report_path']).write_text(
-                    json.dumps({k:v for k,v in quality.items() if k!='report_path'},indent=2)+'\n',
-                    encoding='utf-8')
             if not self.draft_mode:
                 if self.highres_background_cleanup:
                     base = Path(out)
                     clean_out = str(base.with_name(base.stem + "_background_clean.fits"))
                     result = write_background_clean_fits_copy(
-                        out, clean_out, strength=0.90, progress_cb=cb,
+                        out, clean_out, strength=1.0, progress_cb=cb,
                         cancel_cb=self.stopped)
                     out = result["output_path"]
+                    quality['global_background']=result.get('model',{})
+            if quality.get('report_path'):
+                Path(quality['report_path']).write_text(
+                    json.dumps({k:v for k,v in quality.items() if k!='report_path'},indent=2)+'\n',
+                    encoding='utf-8')
             out_paths[fcode] = out
 
         self.send("done",
