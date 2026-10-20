@@ -51,6 +51,13 @@ def run_release_smoke(output_path: str | Path, *, check_skyview: bool = False) -
             and footprint.shape == source.shape
             and np.isfinite(projected).all()
         )
+        from tsdp2.astronomy.background_matching import estimate_background_planes, apply_background_plane
+        y, x = np.mgrid[:48, :64]
+        first = (100 + 0.1*x + 0.05*y).astype(np.float32)
+        second = (first + 20 + 2*(2*x/63-1)).astype(np.float32)
+        corrections = estimate_background_planes([first, second])
+        apply_background_plane(second, corrections[1])
+        payload["checks"]["normalization"] = bool(np.allclose(first, second, atol=0.01, rtol=0))
         if check_skyview:
             from tsdp2.astronomy.sky_background import fetch_skyview_fits
 

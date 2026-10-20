@@ -136,6 +136,7 @@ def _mosaic_cache_key(paths, filter_code, shape_out, wcs_out, combine, downscale
         "filter": str(filter_code), "shape": [int(x) for x in shape_out],
         "wcs": wcs_out.to_header().tostring(sep="\n", endcard=True, padding=False),
         "combine": str(combine), "downscale": float(downscale),
+        "background_method": "robust-overlap-v1",
         "sky_region": sky_region or None,
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)

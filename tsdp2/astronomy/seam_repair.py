@@ -210,8 +210,9 @@ def _fast_repair_fits_holes(target_path, source_paths, output_path,
 
 
 def _coarse_corrected_tiles(paths, wcs_out, shape_out, filter_code="DRAFT",
-                            scratch_dir=None, progress_cb=None, cancel_cb=None):
-    """Reproject sources one at a time onto a small grid and plane-match them."""
+                            scratch_dir=None, progress_cb=None, cancel_cb=None,
+                            source_masked_sky=False):
+    """Reproject sources onto a small grid and robustly normalize backgrounds."""
     shape = tuple(int(x) for x in shape_out)
     tiles = []
     total = max(1, len(paths))
@@ -245,42 +246,20 @@ def _coarse_corrected_tiles(paths, wcs_out, shape_out, filter_code="DRAFT",
 
     if not tiles:
         raise RuntimeError(f"Group '{filter_code}' has no usable WCS image frames.")
-    if len(tiles) == 1:
-        return tiles, [(0.0, 0.0, 0.0)]
-
-    scratch_root = os.path.abspath(os.fspath(scratch_dir or tempfile.gettempdir()))
-    os.makedirs(scratch_root, exist_ok=True)
-    work = tempfile.mkdtemp(prefix=f"jwst_draft_{safe_filename(filter_code)}_",
-                            dir=scratch_root)
-    raw_paths = []
-    try:
-        for i, tile in enumerate(tiles):
-            raw_path = os.path.join(work, f"tile_{i:03d}.f32")
-            mm = np.memmap(raw_path, dtype="float32", mode="w+", shape=shape)
-            mm[:] = tile
-            mm.flush()
-            del mm
-            raw_paths.append(raw_path)
-        if progress_cb:
-            progress_cb(total, total + 2,
-                        f"Matching {filter_code} draft backgrounds")
-        corrections = _estimate_overlap_plane_corrections(
-            raw_paths, shape, filter_code=f"{filter_code} draft", dense=True,
-            nearby_edges=True)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-
-    h, w = shape
-    xn = (2.0 * np.arange(w, dtype=np.float32) /
-          max(w - 1, 1) - 1.0)[None, :]
-    yn = (2.0 * np.arange(h, dtype=np.float32) /
-          max(h - 1, 1) - 1.0)[:, None]
-    corrected = []
-    for tile, (a, bx, by) in zip(tiles, corrections):
-        plane = (np.float32(a) + np.float32(bx) * xn +
-                 np.float32(by) * yn)
-        corrected.append((tile + plane).astype(np.float32, copy=False))
-    return corrected, corrections
+    from tsdp2.astronomy.background_matching import (
+        estimate_background_planes, estimate_source_masked_sky_planes,
+        apply_background_plane)
+    sky_corrections = (estimate_source_masked_sky_planes(tiles, shape)
+                       if source_masked_sky else [(0.0, 0.0, 0.0)] * len(tiles))
+    for tile, correction in zip(tiles, sky_corrections):
+        apply_background_plane(tile, correction)
+    if progress_cb:
+        progress_cb(total, total + 2, f"Robust overlap normalization for {filter_code}")
+    corrections = estimate_background_planes(tiles, shape, filter_code)
+    for tile, correction in zip(tiles, corrections):
+        apply_background_plane(tile, correction)
+    total_corrections = [tuple(np.asarray(a) + b) for a, b in zip(sky_corrections, corrections)]
+    return tiles, total_corrections
 
 
 def _fill_enclosed_draft_holes(data, max_component_fraction=0.01):
@@ -434,7 +413,7 @@ def fast_draft_filter_group(paths, out_dir, filter_code,
     tiles, _corrections = _coarse_corrected_tiles(
         kept_paths, wcs_out, shape_out, filter_code=filter_code,
         scratch_dir=scratch_dir, progress_cb=progress_cb,
-        cancel_cb=cancel_cb)
+        cancel_cb=cancel_cb, source_masked_sky=cosmetic_background)
     if cancel_cb and cancel_cb():
         raise RuntimeError("Mosaic cancelled by user.")
 
@@ -461,13 +440,12 @@ def fast_draft_filter_group(paths, out_dir, filter_code,
     draft_flat_rms = 0.0
     draft_flat_peak = 0.0
     if cosmetic_background:
-        mosaic, draft_flat_rms, draft_flat_peak = \
-            _cosmetic_flatten_draft_background(mosaic)
-        if draft_flat_rms > 0:
-            print(
-                f"[Fast Draft] {filter_code}: cosmetic detector-background "
-                f"cleanup RMS={draft_flat_rms:.3g}, peak={draft_flat_peak:.3g}",
-                flush=True)
+        # Sky subtraction already happened per detector, before feathering.
+        # Do not run the old high-pass mosaic mesh over the galaxy afterwards.
+        magnitudes = np.asarray(_corrections, dtype=np.float64)
+        draft_flat_rms = float(np.sqrt(np.mean(magnitudes**2)))
+        draft_flat_peak = float(np.max(np.abs(magnitudes)))
+        print(f"[Fast Draft] {filter_code}: source-masked detector sky normalization enabled", flush=True)
 
     os.makedirs(out_dir, exist_ok=True)
     mosaic_name = f"mosaic_{safe_filename(filter_code)}.fits"
@@ -477,6 +455,8 @@ def fast_draft_filter_group(paths, out_dir, filter_code,
         else os.path.join(out_dir, mosaic_name))
     hdr = wcs_out.to_header()
     hdr["FILTER"] = filter_code
+    hdr["BGNORM"] = ("robust-overlap-v1", "Relative additive overlap normalization")
+    hdr["SKYNORM"] = (bool(cosmetic_background), "Source-masked per-detector sky subtraction")
     hdr["FASTDRFT"] = (True, "Low-resolution Fast Draft mosaic")
     hdr["DRFTSCL"] = (float(scale), "Draft width/height scale")
     hdr["DRFILL"] = (bool(draft_filled_pixels),
@@ -484,11 +464,11 @@ def fast_draft_filter_group(paths, out_dir, filter_code,
     hdr["DRFILPX"] = (int(draft_filled_pixels),
                       "Cosmetic draft fill pixel count")
     hdr["DRFLAT"] = (bool(cosmetic_background and draft_flat_rms > 0),
-                     "Cosmetic detector background cleanup")
+                     "Source-masked detector sky normalization")
     hdr["DRFLRMS"] = (float(draft_flat_rms),
-                      "RMS of cosmetic draft correction")
+                      "RMS of draft plane coefficients")
     hdr.add_history(
-        f"TSDP Fast Draft: {len(tiles)} frames, combine={combine}")
+        f"TSDP Fast Draft: {len(tiles)} frames, combine={combine}; robust overlap matching")
     if sky_region:
         hdr["SKYCROP"] = (True, "Interactive WCS coverage area applied")
         hdr["SKYROT"] = (float(sky_region.get("rotation_deg", 0.0) or 0.0),
