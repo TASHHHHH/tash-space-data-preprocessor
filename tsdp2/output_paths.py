@@ -76,8 +76,13 @@ class JobPaths:
         return self.root / "final"
 
     @property
+    def output(self) -> Path:
+        """Flat folder holding every aligned filter of a run, ready to import."""
+        return self.final / "output"
+
+    @property
     def aligned(self) -> Path:
-        return self.final / "aligned"
+        return self.output
 
     @property
     def mosaics(self) -> Path:
@@ -130,13 +135,16 @@ class JobPaths:
         return self._output(group, filename, suffix)
 
     def final_aligned_fits(self, filter_name: str, filename: str) -> Path:
-        return self._filtered_output(self.aligned, filter_name, filename)
+        # All filters share one flat folder so the aligned set can be imported
+        # in a single selection; filenames already carry the filter name.
+        return self._output(self.output, filename or filter_name, ".fits")
 
     def final_mosaic_fits(self, filter_name: str, filename: str) -> Path:
         return self._filtered_output(self.mosaics, filter_name, filename)
 
     def final_normalized_fits(self, filter_name: str, filename: str) -> Path:
-        return self._filtered_output(self.normalized, filter_name, filename)
+        # Normalized runs are the alignment's final products too: same folder.
+        return self._output(self.output, filename or filter_name, ".fits")
 
     def preview_png(self, filename: str) -> Path:
         return self._output(self.preview_png_dir, filename, ".png")

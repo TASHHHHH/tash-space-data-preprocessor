@@ -28,9 +28,9 @@ def test_job_creation_is_lazy_and_collision_safe(tmp_path):
 @pytest.mark.parametrize(
     ("method", "args", "relative_parent"),
     [
-        ("final_aligned_fits", ("F200W", "a.fits"), "final/aligned/F200W"),
+        ("final_aligned_fits", ("F200W", "a.fits"), "final/output"),
         ("final_mosaic_fits", ("F444W", "m.fits"), "final/mosaics/F444W"),
-        ("final_normalized_fits", ("F770W", "n.fits"), "final/normalized/F770W"),
+        ("final_normalized_fits", ("F770W", "n.fits"), "final/output"),
         ("footprint", ("f.fits",), "diagnostics/footprints"),
         ("coverage_map", ("c.png",), "diagnostics/coverage_maps"),
         ("mask", ("mask.fits",), "diagnostics/masks"),

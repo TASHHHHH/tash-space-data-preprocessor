@@ -3,6 +3,13 @@ from __future__ import annotations
 from tsdp2.ui._common import *
 
 class MastImporterViewMixin:
+    # Suggestions for the editable "Products" combobox. The dialog failed to
+    # build (and showed no rows) while this attribute was missing.
+    PRODUCT_PRESETS = (
+        "any", "drc drz", "drz", "drc", "i2d", "i2d cal", "cal",
+        "flt", "flc", "rate",
+    )
+
     def _initialize_ui(self, master, rows: list, on_add_cb):
         super().__init__(master)
         self.title("Import MAST CSV")

@@ -58,11 +58,14 @@ def test_alignment_synthetic_outputs_wcs_masks_and_values(tmp_path, fits_factory
     assert Path(out_folder).is_relative_to(paths.root)
     assert Path(log_path).parent == paths.root / "metadata" / "logs"
     assert len(saved) == 2
+    # Every filter lands side by side in one flat import folder.
+    assert Path(out_folder) == paths.root / "final" / "output"
+    assert {Path(output).parent for _name, output, _cov in saved} == {Path(out_folder)}
     arrays = {}
     headers = {}
     for name, output, coverage in saved:
         path = Path(output)
-        assert path.is_relative_to(paths.root / "final" / "normalized")
+        assert path.is_relative_to(paths.root / "final" / "output")
         arrays[name] = fits.getdata(path)
         headers[name] = fits.getheader(path)
         assert coverage == 100.0

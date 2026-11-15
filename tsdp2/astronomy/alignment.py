@@ -235,7 +235,7 @@ def align_crop_many(reference_path: str, reference_name: str,
     output_kind = "aligned_full_canvas" if keep_reference_canvas else "aligned_cropped"
     job_paths = out_base_dir if isinstance(out_base_dir, JobPaths) else None
     if job_paths is not None:
-        science_root = job_paths.normalized if normalize_enabled else job_paths.aligned
+        science_root = job_paths.output
         out_dir = os.fspath(science_root)
     else:
         out_dir = os.path.join(os.fspath(out_base_dir), output_kind)
