@@ -1,0 +1,93 @@
+name: Windows release
+
+# Push a tag like v3.2.7 to build the installer, portable zip, checksums and
+# packaged smoke report on a Windows runner and publish them as a GitHub
+# release. "Run workflow" on the Actions tab builds without publishing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install TSDP and build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[all,packaging]"
+
+      - name: Install Inno Setup if missing
+        shell: pwsh
+        run: |
+          $paths = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe")
+          if (-not ($paths | Where-Object { Test-Path $_ })) { choco install innosetup -y --no-progress }
+
+      - name: Check tag matches app version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $appVersion = python -c "from tsdp2.product import APP_VERSION; print(APP_VERSION)"
+          if ("v$appVersion" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} does not match APP_VERSION $appVersion"
+          }
+
+      - name: Build release
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tsdp-release
+          path: release/*
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart("v")
+          $files = Get-ChildItem release -File | ForEach-Object { $_.FullName }
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @files --clobber
+            exit $LASTEXITCODE
+          }
+          # Notes: this version's CHANGELOG section plus the download list.
+          $section = @(); $inside = $false
+          foreach ($line in Get-Content CHANGELOG.md) {
+            if ($line -match '^## ') {
+              if ($inside) { break }
+              $inside = ($line.Trim() -eq "## $version")
+              continue
+            }
+            if ($inside) { $section += $line }
+          }
+          $notes = @(
+            "Windows x64 update. Python is not required.",
+            "",
+            "### Changes"
+          ) + $section + @(
+            "",
+            "### Downloads",
+            "- **TSDP-Setup-$version.exe**: recommended installer; updates an existing installation.",
+            "- **TSDP-$version-portable.zip**: extract the entire folder before running TSDP.exe.",
+            "- **SHA256SUMS.txt**: SHA-256 checksums.",
+            "- **packaged-smoke.json**: packaged verification report."
+          )
+          $notes -join "`n" | Set-Content -Encoding utf8 release-notes.md
+          gh release create $tag @files --title "TSDP $version" --notes-file release-notes.md
+          exit $LASTEXITCODE

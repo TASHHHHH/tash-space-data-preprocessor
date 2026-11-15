@@ -1,10 +1,10 @@
 # Tash Space Data Preprocessor (TSDP)
 
-TSDP 3.2.6 is a Windows desktop application for downloading and processing astronomical FITS data. It supports multi-HDU inputs, WCS-aware mosaics, normalization, alignment, previews, recovery, and optional Telegram control.
+TSDP 3.2.7 is a Windows desktop application for downloading and processing astronomical FITS data. It supports multi-HDU inputs, WCS-aware mosaics, normalization, alignment, previews, recovery, and optional Telegram control.
 
 ## Recommended installation
 
-Run `TSDP-Setup-3.2.6.exe`. The installer uses the current Windows account, supports installing over a previous version, creates Start menu shortcuts, and can optionally create a desktop shortcut. Python is not required for the installed application.
+Run `TSDP-Setup-3.2.7.exe`. The installer uses the current Windows account, supports installing over a previous version, creates Start menu shortcuts, and can optionally create a desktop shortcut. Python is not required for the installed application.
 
 A portable ZIP is also provided. Extract the entire folder before running `TSDP.exe`; do not run the executable from inside the ZIP.
 
@@ -32,7 +32,8 @@ Every organized processing run receives an isolated, collision-safe job folder. 
 
 ```text
 Job_Name/
-|-- final/{aligned,mosaics,normalized}/<filter>/
+|-- final/output/            (all aligned filters together, ready to import)
+|-- final/mosaics/<filter>/
 |-- previews/{png,jpeg}/
 |-- diagnostics/{footprints,coverage_maps,masks,seam_maps,weight_maps,rejected_frames}/
 |-- intermediate/{reprojected,cropped,normalized,temporary_fits,memmaps}/

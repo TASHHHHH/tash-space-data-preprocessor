@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.2.7
+
+- Fix the Import MAST CSV window opening empty: it failed while building its Products list, so no observation rows could be chosen. All CSV rows are listed and preselected again.
+- Write every aligned filter (and every normalized alignment output) into one flat `final/output` folder instead of a separate subfolder per filter, so the whole aligned set can be imported in a single selection. Mosaic outputs keep their per-filter folders.
+
 ## 3.2.6
 
 - Add full-field global visual normalization after relative detector matching: remove broad illumination gradients and remaining detector pedestals, and use a common zero sky level across bands.
